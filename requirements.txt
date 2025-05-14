@@ -1,0 +1,27 @@
+# requirements.txt
+
+# Core
+numpy
+scikit-learn
+faiss-cpu
+joblib
+
+# LLM APIs
+openai
+requests
+
+# NLP
+python-docx
+
+# PyTorch (if local训练/微调未来需要)
+torch
+
+# Graph
+networkx
+
+# Logging & Console
+loguru
+
+# Optional: fasttext or jieba if future segmentation or classification needed
+# jieba
+# fasttext
