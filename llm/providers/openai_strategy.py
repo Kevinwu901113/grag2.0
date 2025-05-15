@@ -3,11 +3,11 @@ from openai import OpenAI
 
 class OpenAIStrategy:
     def __init__(self, config: dict):
-        self.model_name = config["llm"]["model_name"]
-        self.embedding_model = config["llm"]["embedding_model"]
+        self.model_name = config["model_name"]
+        self.embedding_model = config.get("embedding_model", self.model_name)
         self.client = OpenAI(
-            api_key=config["llm"]["openai_api_key"],
-            base_url=config["llm"].get("openai_base_url", "https://api.openai.com/v1")
+            api_key=config["openai_api_key"],
+            base_url=config.get("openai_base_url", "https://api.openai.com/v1")
         )
 
     def generate(self, prompt: str) -> str:

@@ -3,10 +3,10 @@ import json
 
 class OllamaStrategy:
     def __init__(self, config: dict):
-        self.model = config["llm"]["model_name"]
-        self.host = config["llm"]["host"]
-        self.options = config["llm"].get("options", {})
-        self.config = config  # ⬅️ 添加 config 以便获取 embedding_model
+        self.model = config["model_name"]
+        self.host = config["host"]
+        self.options = config.get("options", {})
+        self.embedding_model = config.get("embedding_model", self.model)
 
     def generate(self, prompt: str) -> str:
         payload = {
@@ -33,12 +33,11 @@ class OllamaStrategy:
         return full_text.strip()
 
     def embed(self, texts):
-        model = self.config["llm"].get("embedding_model", self.model)
         embeddings = []
 
         for text in texts:
             payload = {
-                "model": model,
+                "model": self.embedding_model,
                 "prompt": text,
                 "stream": False,
                 "options": self.options,

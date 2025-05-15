@@ -1,9 +1,10 @@
 
 import os
 import json
+import yaml
 import argparse
 from tqdm import tqdm
-from llm.llm import ollama_model_complete  # 假设你的 openapi 方法封装在这里
+from llm.llm import LLMClient
 
 EVAL_PROMPT_TEMPLATE = """
 你是一名专业的AI评估助手。以下是一个用户查询及其分类标签预测结果：
@@ -21,15 +22,14 @@ EVAL_PROMPT_TEMPLATE = """
 }}
 """
 
-def evaluate_sample(sample):
+def evaluate_sample(sample, llm_client):
     query = sample["query"]
     label = sample["label"]
-    precise = sample["precise"]
-
-    prompt = EVAL_PROMPT_TEMPLATE.format(query=query, label=label, precise="是" if precise else "否")
-    response = ollama_model_complete(prompt)
+    precise = "是" if sample["precise"] else "否"
+    prompt = EVAL_PROMPT_TEMPLATE.format(query=query, label=label, precise=precise)
 
     try:
+        response = llm_client.generate(prompt)
         parsed = json.loads(response)
         sample["llm_agree"] = parsed.get("agree", None)
         sample["llm_suggestion"] = parsed.get("suggestion", None)
@@ -41,16 +41,20 @@ def evaluate_sample(sample):
 
     return sample
 
-def process_file(input_path, output_path):
+def process_file(input_path, output_path, config_path="config.yaml"):
+    with open(config_path, "r", encoding="utf-8") as f:
+        config = yaml.safe_load(f)
+    llm = LLMClient(config)
+
     results = []
     with open(input_path, "r", encoding="utf-8") as f:
         for line in tqdm(f, desc="Evaluating"):
             try:
                 sample = json.loads(line.strip())
-                evaluated = evaluate_sample(sample)
+                evaluated = evaluate_sample(sample, llm)
                 results.append(evaluated)
-            except:
-                continue
+            except Exception as e:
+                print("跳过异常样本:", e)
 
     with open(output_path, "w", encoding="utf-8") as out:
         for item in results:
@@ -63,6 +67,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=str, required=True, help="输入样本文件路径 (.jsonl)")
     parser.add_argument("--output", type=str, required=True, help="评估结果保存路径 (.jsonl)")
+    parser.add_argument("--config", type=str, default="config.yaml", help="配置文件路径")
     args = parser.parse_args()
 
-    process_file(args.input, args.output)
+    process_file(args.input, args.output, args.config)

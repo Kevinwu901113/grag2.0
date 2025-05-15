@@ -15,7 +15,7 @@ from query.query_classifier import run_query_classifier
 from query.query_handler import run_query_loop
 
 # 新增分类器模块
-from classifier.train_base_classifier import train_and_save_model
+from classifier.train_base_classifier import train_model
 from classifier.finetune_classifier import finetune_model
 from classifier.continual_trainer import continual_update
 from classifier.evaluate_with_llm import evaluate_sample  

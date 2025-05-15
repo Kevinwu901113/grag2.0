@@ -131,6 +131,13 @@ def generate_queries(config: dict, num: int, output_path: str, logger):
 
     logger.info(f"✅ 高质量分类器训练数据生成完成，总计生成并写入 {generated} 条，保存在 {output_path}")
 
+
+def main(config, work_dir, logger):
+    num = config.get("classifier", {}).get("generate_samples", 100)
+    output = os.path.join(work_dir, "base_classifier_samples.jsonl")
+    generate_queries(config, num, output, logger)
+    
+    
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--num", type=int, default=50, help="生成的总样本数量")

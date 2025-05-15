@@ -41,5 +41,5 @@ config.local.yaml
 # macOS / Linux
 .DS_Store
 *.swp
-
+hf_models/
 config.yaml

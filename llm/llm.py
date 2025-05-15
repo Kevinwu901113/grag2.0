@@ -9,9 +9,11 @@ from llm.providers.openai_strategy import OpenAIStrategy
 
 class LLMClient:
     def __init__(self, config: dict):
-        self.provider = config["llm"]["provider"]
-        self.config = config
-        self.strategy = self._load_strategy(self.provider, config)
+        self.gen_config = config.get("llm", {})
+        self.embed_config = config.get("embedding", self.gen_config)
+
+        self.strategy = self._load_strategy(self.gen_config.get("provider"), self.gen_config)
+        self.embed_strategy = self._load_strategy(self.embed_config.get("provider"), self.embed_config)
 
     def _load_strategy(self, provider: str, config: dict):
         if provider == "ollama":
@@ -25,7 +27,7 @@ class LLMClient:
         return self.strategy.generate(prompt)
 
     def embed(self, texts: List[str]) -> List[List[float]]:
-        embeddings = self.strategy.embed(texts)
+        embeddings = self.embed_strategy.embed(texts)
         if not embeddings:
             print("[LLMClient.embed] 警告：嵌入返回为空，可能是 LLM 接口调用失败或输入为空")
         elif not isinstance(embeddings[0], list):

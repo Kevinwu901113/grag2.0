@@ -1,74 +1,79 @@
-
 import os
 import json
-import torch
 import argparse
+import torch
 import joblib
-from tqdm import tqdm
-from sklearn.linear_model import LogisticRegression
-from sklearn.preprocessing import LabelEncoder
-from transformers import BertTokenizer, BertModel
+from torch.utils.data import DataLoader, Dataset
+from transformers import BertTokenizer, BertModel, AdamW
+from classifier.train_base_classifier import BERTClassifier
 
-class HFEncoder:
-    def __init__(self, model_name_or_path="bert-base-chinese", cache_dir="./hf_models"):
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.tokenizer = BertTokenizer.from_pretrained(model_name_or_path, cache_dir=cache_dir)
-        self.encoder = BertModel.from_pretrained(model_name_or_path, cache_dir=cache_dir).to(self.device)
-        self.encoder.eval()
+class QueryDataset(Dataset):
+    def __init__(self, data_path, tokenizer, label_encoder, max_length=128):
+        self.samples = []
+        self.tokenizer = tokenizer
+        self.label_encoder = label_encoder
+        with open(data_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                obj = json.loads(line)
+                self.samples.append((obj["query"], obj["label"]))
+        self.max_length = max_length
 
-    def encode_text(self, text):
-        inputs = self.tokenizer(text, return_tensors="pt", truncation=True, padding=True, max_length=128)
-        inputs = {k: v.to(self.device) for k, v in inputs.items()}
-        with torch.no_grad():
-            outputs = self.encoder(**inputs)
-            cls_embedding = outputs.last_hidden_state[:, 0, :]
-        return cls_embedding.squeeze(0).cpu().numpy()
+    def __len__(self):
+        return len(self.samples)
 
-    def encode_batch(self, texts):
-        return [self.encode_text(text) for text in tqdm(texts, desc="Embedding")]
+    def __getitem__(self, idx):
+        query, label = self.samples[idx]
+        encoding = self.tokenizer(query, truncation=True, padding='max_length', max_length=self.max_length, return_tensors='pt')
+        return {
+            'input_ids': encoding['input_ids'].squeeze(0),
+            'attention_mask': encoding['attention_mask'].squeeze(0),
+            'label': torch.tensor(self.label_encoder.transform([label])[0], dtype=torch.long)
+        }
 
-def load_data(jsonl_path):
-    queries, labels = [], []
-    with open(jsonl_path, 'r', encoding='utf-8') as f:
-        for line in f:
-            try:
-                sample = json.loads(line.strip())
-                queries.append(sample["query"])
-                labels.append(sample["label"])
-            except:
-                continue
-    return queries, labels
+def finetune_model(base_dir, data_path, output_path, model_name="bert-base-chinese", epochs=300, batch_size=16, lr=2e-5):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    tokenizer = BertTokenizer.from_pretrained(model_name, cache_dir="./hf_models")
+    label_encoder = joblib.load(os.path.join(base_dir, "label_encoder.pkl"))
 
-def finetune_model(data_path, base_model_dir, output_path, model_name="bert-base-chinese"):
-    print("🚀 加载样本数据...")
-    queries, labels = load_data(data_path)
-    encoder = HFEncoder(model_name_or_path=model_name)
+    dataset = QueryDataset(data_path, tokenizer, label_encoder)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
-    print("🧠 生成嵌入向量...")
-    X = encoder.encode_batch(queries)
+    model = BERTClassifier(model_name, cache_dir="./hf_models", num_labels=len(label_encoder.classes_))
+    model.load_state_dict(torch.load(os.path.join(base_dir, "query_classifier.pt")))
+    model.to(device)
 
-    print("📦 加载原模型和标签编码器...")
-    clf = joblib.load(os.path.join(base_model_dir, "query_classifier.pkl"))
-    label_encoder = joblib.load(os.path.join(base_model_dir, "label_encoder.pkl"))
+    optimizer = AdamW(model.parameters(), lr=lr)
+    criterion = torch.nn.CrossEntropyLoss()
 
-    print("📊 编码标签...")
-    y = label_encoder.transform(labels)
+    model.train()
+    for epoch in range(epochs):
+        total_loss = 0
+        for batch in dataloader:
+            input_ids = batch['input_ids'].to(device)
+            attention_mask = batch['attention_mask'].to(device)
+            labels = batch['label'].to(device)
 
-    print("🔁 重新训练模型（拟微调）...")
-    clf.fit(X, y)
+            outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+            loss = criterion(outputs, labels)
+
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+            total_loss += loss.item()
+
+        print(f"Epoch {epoch+1} loss: {total_loss:.4f}")
 
     os.makedirs(output_path, exist_ok=True)
-    joblib.dump(clf, os.path.join(output_path, "query_classifier_finetuned.pkl"))
+    torch.save(model.state_dict(), os.path.join(output_path, "query_classifier.pt"))
     joblib.dump(label_encoder, os.path.join(output_path, "label_encoder.pkl"))
-
-    print("✅ 微调完成，保存至：", output_path)
+    print(f"✅ 微调完成，模型已保存至: {output_path}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data", type=str, required=True, help="微调使用的样本文件")
-    parser.add_argument("--base_model", type=str, required=True, help="base模型目录")
-    parser.add_argument("--output", type=str, required=True, help="保存微调后模型的目录")
-    parser.add_argument("--model", type=str, default="bert-base-chinese", help="HuggingFace模型路径")
+    parser.add_argument("--base", type=str, required=True, help="base模型目录")
+    parser.add_argument("--data", type=str, required=True, help="微调用的数据路径")
+    parser.add_argument("--output", type=str, required=True, help="输出模型保存路径")
+    parser.add_argument("--model", type=str, default="bert-base-chinese", help="模型名称或路径")
     args = parser.parse_args()
 
-    finetune_model(args.data, args.base_model, args.output, args.model)
+    finetune_model(args.base, args.data, args.output, args.model)
