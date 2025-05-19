@@ -1,37 +1,47 @@
-# 示例配置文件：config.yaml.example
-
 llm:
-  provider: "openai"  # 可选: "openai", "ollama"
-  model_name: "gpt-4"
-  embedding_model: "text-embedding-ada-002"
-  openai_api_key: "sk-xxx"  # 请替换为你的 OpenAI 密钥
-  openai_base_url: "https://api.openai.com/v1"  # 默认即可
-  ollama_host: "http://localhost:11434"  # 本地 Ollama 服务
+  provider: "ollama"                     
+  model_name: "qwen2.5:7b-instruct-fp16" 
+  openai_api_key: "sk-..."               # ✅ 若使用 openai provider 才需生效
+  openai_base_url: "https://api.deepseek.com/v1"
+  host: "http://localhost:11434"         
+  options:
+    num_ctx: 32768
+
+embedding:
+  provider: "ollama"                     
+  model_name: "bge-m3:latest"
+  host: "http://localhost:11434"
 
 document:
-  input_dir: "./data"
-  chunk_size: 1000
-  chunk_overlap: 200
-  allowed_types: [".docx", ".json"]
+  input_dir: "./data"                   
+  chunk_size: 1000                      
+  chunk_overlap: 200                    
+  allowed_types: [".docx", ".json"]     
 
 output:
-  base_dir: "./result"
-  work_name: null       # 使用 null 表示自动选最新
-  overwrite: false
-  reuse_cache: true
+  base_dir: "./result"                  
+  work_name: null                       
+  overwrite: false                      
+  reuse_cache: true                     
 
 graph:
-  top_k_relations: 5    # 每个chunk最多抽取几条关系
+  top_k_relations: 5                    
 
-index:
-  use_faiss: true
-  embedding_dim: 1536   # 根据你的嵌入模型选择维度
+vector:                                 # ✅ 修正：应为 vector 而不是 index
+  index_type: "IVF"                     # ✅ 可选: Flat, IVF, HNSW
+  nlist: 100                            # IVF专用
+  nprobe: 10                            # IVF查询时使用
+  ef_search: 32                         # HNSW 查询时使用
 
 classifier:
-  model_path: "query_classifier.pkl"
-  enable_continual_learning: true
-  generate_samples: 30  # 生成训练样本数
+  generate_samples: 300                # ✅ 已采用 base_classifier_samples.jsonl
+  finetune:
+    enable: true
+    base_model: "./result/base"        # ✅ fine-tune 用 base model 路径
+    data: "./result/base_classifier_samples.jsonl"
+    output: "./result/fine_tuned"
+    model: "bert-base-chinese"
 
 query:
-  cache_enabled: true
-  max_history: 1000
+  cache_enabled: true                  
+  max_history: 1000                    

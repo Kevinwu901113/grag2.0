@@ -3,7 +3,7 @@ import json
 import networkx as nx
 from typing import List, Tuple
 from llm.llm import LLMClient
-
+from networkx.readwrite import json_graph  
 
 def run_graph_construction(config: dict, work_dir: str, logger):
     chunk_path = os.path.join(work_dir, "chunks.json")
