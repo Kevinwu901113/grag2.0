@@ -9,7 +9,8 @@ from llm.providers.openai_strategy import OpenAIStrategy
 
 class LLMClient:
     def __init__(self, config: dict):
-        self.gen_config = config.get("llm", {})
+        # 如果直接传入了llm配置，则直接使用；否则尝试从config中获取llm字段
+        self.gen_config = config if "provider" in config else config.get("llm", {})
         self.embed_config = config.get("embedding", self.gen_config)
 
         self.strategy = self._load_strategy(self.gen_config.get("provider"), self.gen_config)

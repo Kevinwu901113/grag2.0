@@ -5,6 +5,7 @@ import numpy as np
 import torch
 import joblib
 from transformers import BertTokenizer
+from query.theme_matcher import ThemeMatcher
 from classifier.train_base_classifier import BERTClassifier
 from llm.llm import LLMClient
 from graph.graph_utils import load_graph, extract_entity_names, match_entities_in_query, extract_subgraph, summarize_subgraph
@@ -100,19 +101,36 @@ def run_query_loop(config: dict, work_dir: str, logger):
             response = llm.generate("请根据图结构信息回答以下问题：\n" + query)
         else:
             try:
-                q_embed = llm.embed([query])[0]
-                D, I = index.search(np.array([q_embed]).astype('float32'), k=5)
+                if "matcher" not in locals():
+                    matcher = ThemeMatcher(chunks)  # chunks.json 中含 summary 字段
+
+                matches = matcher.match(query, top_k=3)
                 retrieved = []
-                for i in I[0]:
-                    chunk_id = id_map.get(str(i))
-                    if not chunk_id:
-                        continue
-                    match = next((c['text'] for c in chunks if c['id'] == chunk_id), None)
-                    if match:
-                        retrieved.append(match)
+                
+                # 打印召回的文档块详细信息
+                print("\n[召回文档详情]")
+                print("-" * 50)
+                
+                for i, match in enumerate(matches):
+                    topic_id = match["node_id"]
+                    similarity = match.get("similarity", 0.0)
+                    topic_title = match.get("title", "无标题")
+                    match_text = next((c['text'] for c in chunks if c['id'] == topic_id), None)
+                    
+                    print(f"文档块 #{i+1}:")
+                    print(f"  ID: {topic_id}")
+                    print(f"  相似度: {similarity:.4f}")
+                    print(f"  主题: {topic_title}")
+                    print(f"  内容: {match_text[:100]}..." if match_text and len(match_text) > 100 else f"  内容: {match_text}")
+                    print("-" * 50)
+                    
+                    if match_text:
+                        retrieved.append(match_text)
+                        
                 if not retrieved:
                     logger.warning("未检索到任何相关文本块。")
                     context = "（未检索到相关文本内容）"
+                    print("未检索到任何相关文本块。")
                 else:
                     logger.info(f"检索到文本块数量: {len(retrieved)}")
                     context = "\n".join(retrieved)
@@ -124,6 +142,17 @@ def run_query_loop(config: dict, work_dir: str, logger):
                         matched_entities = match_entities_in_query(query, entity_names)
                         subgraph = extract_subgraph(graph, matched_entities)
                         graph_summary = summarize_subgraph(subgraph)
+                        
+                        # 打印图谱召回信息
+                        print("\n[图谱召回详情]")
+                        print("-" * 50)
+                        print(f"命中实体数量: {len(matched_entities)}")
+                        if matched_entities:
+                            print("命中实体列表:")
+                            for i, entity in enumerate(matched_entities):
+                                print(f"  {i+1}. {entity}")
+                        print("-" * 50)
+                        
                         logger.info(f"图谱命中实体数量: {len(matched_entities)}")
                     except Exception as ge:
                         logger.warning(f"图谱摘要生成失败: {ge}")

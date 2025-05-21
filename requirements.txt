@@ -1,27 +1,30 @@
 # requirements.txt
 
 # Core
-numpy
-scikit-learn
-faiss-cpu
-joblib
+numpy>=1.20.0
+scikit-learn>=1.0.0
+faiss-cpu>=1.7.0
+joblib>=1.1.0
 
 # LLM APIs
-openai
-requests
+openai>=0.27.0
+requests>=2.28.0
 
 # NLP
-python-docx
+python-docx>=0.8.11
+transformers>=4.20.0
+sentence-transformers>=2.2.0
+tqdm>=4.64.0
 
-# PyTorch (if local训练/微调未来需要)
-torch
+# PyTorch
+torch>=1.10.0
 
 # Graph
-networkx
+networkx>=2.8.0
 
 # Logging & Console
-loguru
+loguru>=0.6.0
 
 # Optional: fasttext or jieba if future segmentation or classification needed
-# jieba
-# fasttext
+# jieba>=0.42.0
+# fasttext>=0.9.2

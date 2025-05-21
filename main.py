@@ -82,7 +82,6 @@ def main():
     maybe_run_finetune(config, work_dir, logger)
     run_graph_construction(config, work_dir, logger)
     run_vector_indexer(config, work_dir, logger)
-    # run_query_classifier(config, work_dir, logger)
     run_query_loop(config, work_dir, logger)
 
 if __name__ == "__main__":
