@@ -61,10 +61,11 @@ def run_document_processing(config: dict, work_dir: str, logger):
                     topic_manager.add_sentence(sentence, meta)
                     chunk_id += 1
 
-        except Exception as e:
+        except (ValueError, IOError, UnicodeDecodeError, KeyError) as e:
             logger.error(f"处理文件 {filename} 时出错: {str(e)}")
 
     # 输出主题聚合块
+    llm_client = LLMClient(config["llm"])
     out_chunks = topic_manager.get_all_topics(llm_client=llm_client)
     out_path = os.path.join(work_dir, "chunks.json")
     with open(out_path, 'w', encoding='utf-8') as f:

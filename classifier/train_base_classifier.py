@@ -43,14 +43,18 @@ def load_data(jsonl_path):
                 sample = json.loads(line.strip())
                 queries.append(sample["query"])
                 labels.append(sample["label"])
-            except:
+            except (json.JSONDecodeError, KeyError) as e:
+                print(f"解析样本失败: {line.strip()}, 错误: {e}")
                 continue
     return queries, labels
 
-def get_or_download_tokenizer(model_name, cache_dir="./hf_models"):
+def get_or_download_tokenizer(model_name, cache_dir=None):
+    if cache_dir is None:
+        cache_dir = os.getenv('HF_CACHE_DIR', './hf_models')
+    os.makedirs(cache_dir, exist_ok=True)
     try:
         return BertTokenizer.from_pretrained(model_name, cache_dir=cache_dir)
-    except Exception as e:
+    except (OSError, ValueError, RuntimeError) as e:
         print(f"⚠️ 加载 tokenizer 失败: {e}")
         print("⏬ 尝试重新下载 tokenizer...")
         return BertTokenizer.from_pretrained(model_name, cache_dir=cache_dir, force_download=True)
@@ -66,11 +70,12 @@ def train_model(data_path, output_dir, model_name, num_epochs=30, batch_size=16,
     encoded_labels = label_encoder.fit_transform(labels)
     num_labels = len(label_encoder.classes_)
 
-    tokenizer = get_or_download_tokenizer(model_name, cache_dir="./hf_models")
+    tokenizer = get_or_download_tokenizer(model_name)
     dataset = QueryDataset(queries, encoded_labels, tokenizer)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
-    model = BERTClassifier(model_name, num_labels, cache_dir="./hf_models")
+    cache_dir = os.getenv('HF_CACHE_DIR', './hf_models')
+    model = BERTClassifier(model_name, num_labels, cache_dir=cache_dir)
     model.to(device)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)

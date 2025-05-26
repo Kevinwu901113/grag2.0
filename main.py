@@ -9,7 +9,7 @@ from utils.misc import init_logger
 # 主流程模块
 from document.document_processor import run_document_processing
 from graph.graph_builder import run_graph_construction
-from vector.vector_indexer import run_vector_indexer
+from vector.optimized_vector_indexer import run_vector_indexer
 from query.query_handler import run_query_loop
 
 # 分类器模块（已统一为bert-based）

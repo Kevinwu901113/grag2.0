@@ -28,13 +28,21 @@ class LLMClient:
         return self.strategy.generate(prompt)
 
     def embed(self, texts: List[str]) -> List[List[float]]:
-        embeddings = self.embed_strategy.embed(texts)
+        if not texts:
+            raise ValueError("输入文本列表为空")
+        
+        try:
+            embeddings = self.embed_strategy.embed(texts)
+        except Exception as e:
+            raise RuntimeError(f"嵌入生成失败: {e}")
+        
         if not embeddings:
-            print("[LLMClient.embed] 警告：嵌入返回为空，可能是 LLM 接口调用失败或输入为空")
-        elif not isinstance(embeddings[0], list):
+            raise RuntimeError("嵌入返回为空，LLM接口调用失败")
+        
+        if not isinstance(embeddings[0], list):
             raise ValueError("嵌入返回格式异常，应为二维 list[float]")
-        else:
-            print(f"[LLMClient.embed] 成功嵌入 {len(embeddings)} 条文本，每条维度 {len(embeddings[0])}")
+        
+        print(f"[LLMClient.embed] 成功嵌入 {len(embeddings)} 条文本，每条维度 {len(embeddings[0])}")
         return embeddings
 
     def extract_entities(self, text: str) -> List[Tuple[str, str]]:

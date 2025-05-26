@@ -5,12 +5,15 @@ import numpy as np
 import torch
 import joblib
 from transformers import BertTokenizer
-from query.theme_matcher import ThemeMatcher
+from query.optimized_theme_matcher import ThemeMatcher
 from classifier.train_base_classifier import BERTClassifier
 from llm.llm import LLMClient
 from graph.graph_utils import load_graph, extract_entity_names, match_entities_in_query, extract_subgraph, summarize_subgraph
 
-def classify_query_bert(query: str, model_path: str, encoder_path: str, model_name="bert-base-chinese", cache_dir="./hf_models"):
+def classify_query_bert(query: str, model_path: str, encoder_path: str, model_name="bert-base-chinese", cache_dir=None):
+    if cache_dir is None:
+        cache_dir = os.getenv('HF_CACHE_DIR', './hf_models')
+    os.makedirs(cache_dir, exist_ok=True)
     try:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         tokenizer = BertTokenizer.from_pretrained(model_name, cache_dir=cache_dir)
@@ -32,7 +35,7 @@ def classify_query_bert(query: str, model_path: str, encoder_path: str, model_na
 
         is_precise = pred_label == "hybrid_precise"
         return pred_label, is_precise
-    except Exception as e:
+    except (ValueError, RuntimeError, torch.cuda.OutOfMemoryError) as e:
         print(f"❌ 分类器推理失败: {e}")
         return "norag", False
 
@@ -41,7 +44,7 @@ def load_chunks(work_dir):
         path = os.path.join(work_dir, "chunks.json")
         with open(path, 'r', encoding='utf-8') as f:
             return json.load(f)
-    except Exception as e:
+    except (FileNotFoundError, json.JSONDecodeError) as e:
         print(f"❌ 加载文档块失败: {e}")
         return []
 
@@ -53,7 +56,7 @@ def load_index(work_dir):
         with open(mapping_path, 'r', encoding='utf-8') as f:
             id_map = json.load(f)
         return index, id_map
-    except Exception as e:
+    except (FileNotFoundError, json.JSONDecodeError, IOError) as e:
         print(f"❌ 加载索引失败: {e}")
         return None, {}
 
@@ -93,8 +96,19 @@ def run_query_loop(config: dict, work_dir: str, logger):
         if query.strip().lower() == "exit":
             break
 
-        mode, precise = classify_query_bert(query, model_path_pt, encoder_path, model_name)
-        logger.info(f"当前 query 分类为: {mode}，是否精确: {precise}")
+        # 初始分类
+        original_mode, original_precise = classify_query_bert(query, model_path_pt, encoder_path, model_name)
+        logger.info(f"初始分类结果: {original_mode}，是否精确: {original_precise}")
+        
+        # 应用二次判断增强
+        from query.query_enhancer import enhance_query_classification
+        mode, precise = enhance_query_classification(query, original_mode, original_precise)
+        
+        # 如果分类结果被修改，记录日志
+        if mode != original_mode or precise != original_precise:
+            logger.info(f"二次判断后分类为: {mode}，是否精确: {precise}")
+        else:
+            logger.info(f"当前 query 分类为: {mode}，是否精确: {precise}")
 
         response = ""
         if mode == "norag" and not precise:
@@ -104,7 +118,7 @@ def run_query_loop(config: dict, work_dir: str, logger):
                 if "matcher" not in locals():
                     matcher = ThemeMatcher(chunks)  # chunks.json 中含 summary 字段
 
-                matches = matcher.match(query, top_k=3)
+                matches = matcher.match(query, top_k=5, min_score=0.3)
                 retrieved = []
                 
                 # 打印召回的文档块详细信息
@@ -154,7 +168,7 @@ def run_query_loop(config: dict, work_dir: str, logger):
                         print("-" * 50)
                         
                         logger.info(f"图谱命中实体数量: {len(matched_entities)}")
-                    except Exception as ge:
+                    except (KeyError, ValueError, TypeError) as ge:
                         logger.warning(f"图谱摘要生成失败: {ge}")
 
                 if precise:
@@ -163,7 +177,7 @@ def run_query_loop(config: dict, work_dir: str, logger):
                     prompt = f"以下是相关文本块和图信息摘要：\n{context}\n\n图谱摘要：\n{graph_summary}\n\n请结合上下文回答：{query}"
 
                 response = llm.generate(prompt)
-            except Exception as e:
+            except (ValueError, ConnectionError, TimeoutError) as e:
                 logger.error(f"查询处理失败: {e}")
                 response = "对不起，查询处理过程中发生错误。"
 
@@ -173,5 +187,5 @@ def run_query_loop(config: dict, work_dir: str, logger):
             try:
                 with open(cache_path, 'a', encoding='utf-8') as f:
                     f.write(json.dumps({"query": query, "mode": mode, "precise": precise, "response": response.strip()}, ensure_ascii=False) + "\n")
-            except Exception as e:
+            except (IOError, PermissionError) as e:
                 logger.warning(f"⚠️ 缓存写入失败: {e}")

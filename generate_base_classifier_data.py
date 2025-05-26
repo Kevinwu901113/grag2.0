@@ -77,7 +77,8 @@ def parse_response(text):
                 "query": q,
                 "label": label
             })
-        except:
+        except (ValueError, KeyError) as e:
+            logger.warning(f"解析查询失败: {line.strip()}, 错误: {e}")
             continue
     return results
 
@@ -97,7 +98,8 @@ def generate_queries(config: dict, num: int, output_path: str, logger):
                     q = sample["query"]
                     existing_queries.add(q)
                     existing_list.append(q)
-                except:
+                except (json.JSONDecodeError, KeyError) as e:
+                    logger.warning(f"解析已有样本失败: {line.strip()}, 错误: {e}")
                     continue
         if existing_list:
             existing_emb = model.encode(existing_list, convert_to_tensor=True)

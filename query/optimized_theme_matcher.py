@@ -44,28 +44,40 @@ class ThemeMatcher:
         self.embeddings = all_embeddings
         logger.info(f"主题匹配器初始化完成，共 {len(self.embeddings)} 个主题摘要")
 
-    def match(self, query: str, top_k: int = 3) -> List[Dict[str, Any]]:
+    def match(self, query: str, top_k: int = 3, min_score: float = 0.0) -> List[Dict[str, Any]]:
         """
         匹配查询与主题摘要
         
         Args:
             query: 查询文本
             top_k: 返回的最大匹配数量
+            min_score: 最小相似度阈值，低于此值的匹配将被过滤
             
         Returns:
             匹配结果列表，每个结果包含摘要、ID和得分
         """
         query_emb = self.model.encode(query)
         sims = cosine_similarity([query_emb], self.embeddings)[0]
-        sorted_idx = sims.argsort()[::-1][:top_k]
+        
+        # 先按相似度排序
+        sorted_pairs = sorted(enumerate(sims), key=lambda x: x[1], reverse=True)
+        
+        # 过滤低于阈值的结果
+        filtered_pairs = [(idx, score) for idx, score in sorted_pairs if score >= min_score]
+        
+        # 取前top_k个结果
+        top_pairs = filtered_pairs[:top_k]
         
         results = []
-        for idx in sorted_idx:
+        for idx, score in top_pairs:
+            node_id = self.summaries[idx].get("id", "")
             results.append({
                 "summary": self.summaries[idx].get("summary", ""),
-                "id": self.summaries[idx].get("id", ""),
-                "score": float(sims[idx])
+                "node_id": node_id,  # 确保返回node_id字段
+                "id": node_id,        # 兼容性考虑
+                "similarity": float(score),  # 添加similarity字段
+                "score": float(score)       # 兼容性考虑
             })
             
-        logger.debug(f"查询 '{query}' 匹配到 {len(results)} 个主题，最高分: {results[0]['score'] if results else 0}")
+        logger.debug(f"查询 '{query}' 匹配到 {len(results)} 个主题，最高分: {results[0]['similarity'] if results else 0}")
         return results

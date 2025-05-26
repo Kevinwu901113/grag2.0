@@ -48,7 +48,7 @@ def run_vector_indexer(config: dict, work_dir: str, logger=None):
             batch_embeddings = llm.embed(batch_texts)
             all_embeddings.extend(batch_embeddings)
             pbar.update(len(batch_texts))
-    except Exception as e:
+    except (ValueError, ConnectionError, TimeoutError) as e:
         logger.error(f"生成嵌入时出错: {e}")
         pbar.close()
         return

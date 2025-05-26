@@ -34,7 +34,7 @@ def evaluate_sample(sample, llm_client):
         sample["llm_agree"] = parsed.get("agree", None)
         sample["llm_suggestion"] = parsed.get("suggestion", None)
         sample["llm_reason"] = parsed.get("reason", None)
-    except Exception as e:
+    except (json.JSONDecodeError, ValueError, KeyError) as e:
         sample["llm_agree"] = None
         sample["llm_error"] = str(e)
         sample["llm_raw"] = response
@@ -53,7 +53,7 @@ def process_file(input_path, output_path, config_path="config.yaml"):
                 sample = json.loads(line.strip())
                 evaluated = evaluate_sample(sample, llm)
                 results.append(evaluated)
-            except Exception as e:
+            except (json.JSONDecodeError, KeyError, ValueError) as e:
                 print("跳过异常样本:", e)
 
     with open(output_path, "w", encoding="utf-8") as out:

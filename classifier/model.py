@@ -6,7 +6,10 @@ import torch.nn as nn
 from transformers import BertModel, BertTokenizer
 
 class BERTClassifier(nn.Module):
-    def __init__(self, model_name, num_labels, cache_dir="./hf_models"):
+    def __init__(self, model_name, num_labels, cache_dir=None):
+        if cache_dir is None:
+            cache_dir = os.getenv('HF_CACHE_DIR', './hf_models')
+        os.makedirs(cache_dir, exist_ok=True)
         super().__init__()
         self.bert = BertModel.from_pretrained(model_name, cache_dir=cache_dir)
         self.dropout = nn.Dropout(0.3)

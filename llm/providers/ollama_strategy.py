@@ -27,8 +27,10 @@ class OllamaStrategy:
                     full_text += data.get("response", "")
                 except json.JSONDecodeError as e:
                     print("[解析失败行]", line)
+        except (requests.RequestException, ConnectionError) as e:
+            print(f"[Ollama 请求失败] 网络错误: {e}")
         except Exception as e:
-            print("[Ollama 请求失败]", e)
+            print(f"[Ollama 请求失败] 未知错误: {e}")
 
         return full_text.strip()
 
@@ -46,8 +48,11 @@ class OllamaStrategy:
 
             try:
                 result = r.json()
+            except (json.JSONDecodeError, ValueError) as e:
+                print(f"[Ollama embed] JSON解析失败: {e}, 响应内容: {r.text}")
+                raise e
             except Exception as e:
-                print("[Ollama embed] 无法解析响应:", r.text)
+                print(f"[Ollama embed] 未知错误: {e}, 响应内容: {r.text}")
                 raise e
 
             embedding = result.get("embedding")

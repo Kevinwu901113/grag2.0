@@ -1,6 +1,6 @@
 import numpy as np
 from typing import List, Dict
-from .topic_summary_generator import generate_topic_summary  # 我们新建此工具文件
+from document.topic_summary_generator import generate_topic_summary  # 我们新建此工具文件
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 
@@ -53,18 +53,11 @@ class TopicPoolManager:
         topic["center"] = np.mean([topic["center"], embedding], axis=0)
 
     def get_all_topics(self, llm_client=None) -> List[Dict]:
-        """
-        返回所有主题块，使用 llm_client 生成 summary 字段
-        """
         result = []
         for topic in self.topics:
             text = "\n".join(topic["sentences"])
             sources = list({m['source'] for m in topic["meta"] if m and 'source' in m})
-
-            summary = (
-                generate_topic_summary(text, llm_client) if llm_client else topic["id"]
-            )
-
+            summary = generate_topic_summary(text, llm_client) if llm_client else topic["id"]
             result.append({
                 "id": topic["id"],
                 "text": text,

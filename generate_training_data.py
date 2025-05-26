@@ -47,7 +47,7 @@ def run_generate_training_data(config: dict, work_dir: str, logger):
                     "label": "hybrid" if is_hybrid in ["是", "yes", "true", "True"] else "norag"
                 }, ensure_ascii=False) + "\n")
                 count += 1
-            except Exception as e:
+            except (ValueError, IndexError, json.JSONDecodeError) as e:
                 logger.warning(f"解析生成响应失败: {response} -> {str(e)}")
 
     logger.info(f"训练数据生成完成，共生成 {count} 条记录，已追加写入 {output_path}")

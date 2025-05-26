@@ -32,13 +32,15 @@ class QueryDataset(Dataset):
 
 def finetune_model(base_dir, data_path, output_path, model_name="bert-base-chinese", epochs=300, batch_size=16, lr=2e-5):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    tokenizer = BertTokenizer.from_pretrained(model_name, cache_dir="./hf_models")
+    cache_dir = os.getenv('HF_CACHE_DIR', './hf_models')
+    os.makedirs(cache_dir, exist_ok=True)
+    tokenizer = BertTokenizer.from_pretrained(model_name, cache_dir=cache_dir)
     label_encoder = joblib.load(os.path.join(base_dir, "label_encoder.pkl"))
 
     dataset = QueryDataset(data_path, tokenizer, label_encoder)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
-    model = BERTClassifier(model_name, cache_dir="./hf_models", num_labels=len(label_encoder.classes_))
+    model = BERTClassifier(model_name, cache_dir=cache_dir, num_labels=len(label_encoder.classes_))
     model.load_state_dict(torch.load(os.path.join(base_dir, "query_classifier.pt")))
     model.to(device)
 

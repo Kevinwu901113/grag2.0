@@ -1,29 +1,25 @@
 import json
 import networkx as nx
 import re
+from networkx.readwrite import json_graph
+import jieba
 
-def load_graph(graph_path):
-    with open(graph_path, 'r', encoding='utf-8') as f:
+def load_graph(path: str) -> nx.Graph:
+    with open(path, 'r', encoding='utf-8') as f:
         data = json.load(f)
-    # 处理自定义格式的图数据，转换为NetworkX期望的格式
-    if "nodes" in data and "edges" in data and "links" not in data:
-        # 将edges键重命名为links以匹配NetworkX期望的格式
-        data["links"] = data.pop("edges")
-    # 明确指定edges参数为"links"以避免警告
-    G = nx.node_link_graph(data, edges="links")
-    return G
+    return json_graph.node_link_graph(data)
 
-def extract_entity_names(graph):
-    names = set()
-    for node, attrs in graph.nodes(data=True):
-        label = attrs.get("label", "")
-        match = re.search(r'\|\s*([^|]+?)\s*\|', label)
-        if match:
-            names.add(match.group(1).strip())
-    return names
+def extract_entity_names(graph: nx.Graph) -> set[str]:
+    return {
+        node for node, data in graph.nodes(data=True)
+        if data.get("type") == "entity"
+    }
 
-def match_entities_in_query(query, entity_names):
-    return [name for name in entity_names if name in query]
+def match_entities_in_query(query: str, entity_names: set[str]) -> set[str]:
+    tokens = list(jieba.cut(query))
+    joined = "".join(tokens)
+    matched = {ent for ent in entity_names if ent in joined}
+    return matched
 
 def extract_subgraph(graph, entities, depth=1):
     nodes = set()

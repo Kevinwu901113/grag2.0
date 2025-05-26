@@ -2,11 +2,22 @@ from typing import Dict, Any, Optional
 import os
 import torch
 import joblib
+from pathlib import Path
 from transformers import BertTokenizer
 from sentence_transformers import SentenceTransformer
 from utils.logger import setup_logger
 
 logger = setup_logger(os.getcwd())
+
+# 默认缓存目录配置
+DEFAULT_HF_CACHE_DIR = os.getenv('HF_CACHE_DIR', './hf_models')
+
+def ensure_cache_dir(cache_dir: str = None) -> str:
+    """确保缓存目录存在并返回路径"""
+    if cache_dir is None:
+        cache_dir = DEFAULT_HF_CACHE_DIR
+    Path(cache_dir).mkdir(parents=True, exist_ok=True)
+    return cache_dir
 
 class ModelCache:
     """模型缓存管理器，实现单例模式确保模型只加载一次"""
@@ -21,7 +32,7 @@ class ModelCache:
             cls._instance._label_encoders = {}
         return cls._instance
     
-    def get_bert_model(self, model_path: str, num_labels: int, model_name: str = "bert-base-chinese", cache_dir: str = "./hf_models") -> Any:
+    def get_bert_model(self, model_path: str, num_labels: int, model_name: str = "bert-base-chinese", cache_dir: str = None) -> Any:
         """获取BERT模型，如果已加载则直接返回缓存的模型"""
         if model_path in self._models:
             return self._models[model_path]
@@ -38,16 +49,17 @@ class ModelCache:
             self._models[model_path] = model
             logger.info(f"已加载BERT模型: {model_path}")
             return model
-        except Exception as e:
+        except (FileNotFoundError, RuntimeError, ValueError) as e:
             logger.error(f"加载BERT模型失败: {e}")
             return None
     
-    def get_tokenizer(self, model_name: str, cache_dir: str = "./hf_models") -> Optional[BertTokenizer]:
+    def get_tokenizer(self, model_name: str, cache_dir: str = None) -> Optional[BertTokenizer]:
         """获取tokenizer，如果已加载则直接返回缓存的tokenizer"""
         if model_name in self._tokenizers:
             return self._tokenizers[model_name]
         
         try:
+            cache_dir = ensure_cache_dir(cache_dir)
             tokenizer = BertTokenizer.from_pretrained(model_name, cache_dir=cache_dir)
             self._tokenizers[model_name] = tokenizer
             logger.info(f"已加载Tokenizer: {model_name}")

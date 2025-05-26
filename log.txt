@@ -1,0 +1,6 @@
+2025-05-26 16:54:41 | INFO     | utils.model_cache:get_sentence_transformer:79 - 已加载SentenceTransformer: all-MiniLM-L6-v2
+2025-05-26 16:54:41 | INFO     | query.optimized_theme_matcher:__init__:27 - 正在编码 1605 个主题摘要...
+2025-05-26 16:54:42 | INFO     | query.optimized_theme_matcher:__init__:45 - 主题匹配器初始化完成，共 1605 个主题摘要
+2025-05-26 18:48:05 | INFO     | utils.model_cache:get_sentence_transformer:79 - 已加载SentenceTransformer: all-MiniLM-L6-v2
+2025-05-26 18:48:05 | INFO     | query.optimized_theme_matcher:__init__:27 - 正在编码 1605 个主题摘要...
+2025-05-26 18:48:05 | INFO     | query.optimized_theme_matcher:__init__:45 - 主题匹配器初始化完成，共 1605 个主题摘要
