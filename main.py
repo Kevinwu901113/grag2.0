@@ -40,10 +40,38 @@ def maybe_run_finetune(config, work_dir, logger):
     if not ft_config or not ft_config.get("enable", False):
         return
     logger.info("⚙️ 启用微调流程...")
+    
+    # base_model应该指向work_dir内的base目录
+    base_model_path = ft_config["base_model"]
+    if base_model_path.startswith("./result/"):
+        # 如果配置中是./result/base这样的路径，则改为相对于work_dir的路径
+        relative_path = base_model_path.replace("./result/", "")
+        base_dir = os.path.join(work_dir, relative_path)
+    elif os.path.isabs(base_model_path):
+        base_dir = base_model_path
+    else:
+        base_dir = os.path.join(work_dir, base_model_path)
+    
+    # 处理data路径
+    data_path_config = ft_config["data"]
+    if data_path_config.startswith("./result/"):
+        data_relative_path = data_path_config.replace("./result/", "")
+        data_path = os.path.join(work_dir, data_relative_path)
+    else:
+        data_path = os.path.join(work_dir, data_path_config)
+    
+    # 处理output路径
+    output_path_config = ft_config["output"]
+    if output_path_config.startswith("./result/"):
+        output_relative_path = output_path_config.replace("./result/", "")
+        output_path = os.path.join(work_dir, output_relative_path)
+    else:
+        output_path = os.path.join(work_dir, output_path_config)
+    
     finetune_model(
-        base_dir = os.path.join(work_dir, ft_config["base_model"]),
-        data_path=os.path.join(work_dir, ft_config["data"]),
-        output_path=os.path.join(work_dir, ft_config["output"]),
+        base_dir=base_dir,
+        data_path=data_path,
+        output_path=output_path,
         model_name=ft_config.get("model", "bert-base-chinese")
     )
 
@@ -70,7 +98,13 @@ def main():
         run_vector_indexer(config, work_dir, logger)
         return
     elif args.debug == "classifier":
-        run_query_classifier(config, work_dir, logger)
+        # 训练基础分类器
+        check_and_generate_training_data(config, work_dir, logger)
+        sample_path = os.path.join(work_dir, "base_classifier_samples.jsonl")
+        output_dir = os.path.join(work_dir, "base")
+        model_name = config.get("classifier", {}).get("bert_model", "bert-base-chinese")
+        train_model(sample_path, output_dir, model_name)
+        maybe_run_finetune(config, work_dir, logger)
         return
     elif args.debug == "query":
         run_query_loop(config, work_dir, logger)
@@ -79,7 +113,16 @@ def main():
     # 默认完整流程
     run_document_processing(config, work_dir, logger)
     check_and_generate_training_data(config, work_dir, logger)
+    
+    # 先训练基础分类器，生成label_encoder.pkl
+    sample_path = os.path.join(work_dir, "base_classifier_samples.jsonl")
+    output_dir = os.path.join(work_dir, "base")
+    model_name = config.get("classifier", {}).get("bert_model", "bert-base-chinese")
+    train_model(sample_path, output_dir, model_name)
+    
+    # 然后再进行微调（如果启用）
     maybe_run_finetune(config, work_dir, logger)
+    
     run_graph_construction(config, work_dir, logger)
     run_vector_indexer(config, work_dir, logger)
     run_query_loop(config, work_dir, logger)

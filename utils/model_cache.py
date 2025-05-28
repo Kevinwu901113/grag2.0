@@ -4,8 +4,14 @@ import torch
 import joblib
 from pathlib import Path
 from transformers import BertTokenizer
-from sentence_transformers import SentenceTransformer
 from utils.logger import setup_logger
+
+# 条件导入SentenceTransformer，避免在只使用Ollama API时出错
+try:
+    from sentence_transformers import SentenceTransformer
+    SENTENCE_TRANSFORMER_AVAILABLE = True
+except ImportError:
+    SENTENCE_TRANSFORMER_AVAILABLE = False
 
 logger = setup_logger(os.getcwd())
 
@@ -68,11 +74,17 @@ class ModelCache:
             logger.error(f"加载Tokenizer失败: {e}")
             return None
     
-    def get_sentence_transformer(self, model_name: str) -> Optional[SentenceTransformer]:
+    def get_sentence_transformer(self, model_name: str) -> Optional[Any]:
         """获取句向量模型，如果已加载则直接返回缓存的模型"""
         if model_name in self._sentence_transformers:
             return self._sentence_transformers[model_name]
         
+        # 检查SentenceTransformer是否可用
+        if not SENTENCE_TRANSFORMER_AVAILABLE:
+            logger.error(f"SentenceTransformer库未安装，无法加载模型: {model_name}")
+            logger.info(f"如果您使用的是Ollama API进行嵌入，可以忽略此错误")
+            return None
+            
         try:
             model = SentenceTransformer(model_name)
             self._sentence_transformers[model_name] = model

@@ -1,27 +1,56 @@
 import os
 from typing import List, Dict, Any, Optional
-from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
-from utils.model_cache import model_cache
+from utils.model_cache import model_cache, SENTENCE_TRANSFORMER_AVAILABLE
 from utils.logger import setup_logger
+from llm.llm import LLMClient
+
+# 条件导入SentenceTransformer，避免在只使用Ollama API时出错
+if SENTENCE_TRANSFORMER_AVAILABLE:
+    from sentence_transformers import SentenceTransformer
 
 logger = setup_logger(os.getcwd())
 
 class ThemeMatcher:
     """
     主题匹配器，用于匹配查询与主题摘要
-    优化版本：从配置中读取模型名称，使用模型缓存
+    优化版本：从配置中读取模型名称，使用模型缓存，支持多种嵌入模型
     """
     def __init__(self, theme_summaries: List[Dict[str, Any]], config: Optional[Dict[str, Any]] = None):
-        # 从配置中读取模型名称，如果没有则使用默认值
+        # 从配置中读取模型名称，支持多种嵌入模型
         self.config = config or {}
-        model_name = self.config.get("matcher", {}).get("model_name", "all-MiniLM-L6-v2")
+        embedding_config = self.config.get("embedding", {})
         
-        # 使用模型缓存获取模型
-        self.model = model_cache.get_sentence_transformer(model_name)
-        if self.model is None:
-            logger.warning(f"无法加载模型 {model_name}，尝试使用默认模型")
-            self.model = SentenceTransformer("all-MiniLM-L6-v2")
+        # 支持的模型映射（用于本地SentenceTransformer模型）
+        model_mapping = {
+            "text2vec": "shibing624/text2vec-base-chinese",
+            "text-embedding-ada-002": "all-MiniLM-L6-v2",  # OpenAI模型的本地替代
+            "all-MiniLM-L6-v2": "all-MiniLM-L6-v2"
+        }
+        
+        model_name = embedding_config.get("model_name", "bge-m3")
+        provider = embedding_config.get("provider", "ollama")
+        
+        self.use_ollama = False
+        # 如果是bge-m3模型且provider是ollama，使用ollama的嵌入API
+        if model_name == "bge-m3" or model_name == "BAAI/bge-m3" and provider == "ollama":
+            logger.info(f"使用Ollama API调用BGE-M3模型进行嵌入")
+            self.llm_client = LLMClient(self.config)
+            self.use_ollama = True
+            self.model = None
+        else:
+            # 检查SentenceTransformer是否可用
+            if not SENTENCE_TRANSFORMER_AVAILABLE:
+                logger.error(f"SentenceTransformer库未安装，无法使用本地模型。请使用Ollama API或安装sentence-transformers库。")
+                raise ImportError("SentenceTransformer库未安装，无法使用本地模型。请使用Ollama API或安装sentence-transformers库。")
+                
+            # 否则使用本地SentenceTransformer模型
+            actual_model_name = model_mapping.get(model_name, model_name)
+            # 使用模型缓存获取模型
+            self.model = model_cache.get_sentence_transformer(actual_model_name)
+            if self.model is None:
+                logger.warning(f"无法加载模型 {actual_model_name}，尝试使用默认模型")
+                self.model = SentenceTransformer("all-MiniLM-L6-v2")
             
         self.summaries = theme_summaries
         logger.info(f"正在编码 {len(theme_summaries)} 个主题摘要...")
@@ -37,7 +66,12 @@ class ThemeMatcher:
         with get_progress_bar(total=len(summaries_text), desc="编码主题摘要") as pbar:
             for i in range(0, len(summaries_text), batch_size):
                 batch = summaries_text[i:i+batch_size]
-                batch_embeddings = self.model.encode(batch)
+                if self.use_ollama:
+                    # 使用Ollama API进行嵌入
+                    batch_embeddings = self.llm_client.embed(batch)
+                else:
+                    # 使用本地SentenceTransformer模型进行嵌入
+                    batch_embeddings = self.model.encode(batch)
                 all_embeddings.extend(batch_embeddings)
                 pbar.update(len(batch))
         
@@ -46,7 +80,7 @@ class ThemeMatcher:
 
     def match(self, query: str, top_k: int = 3, min_score: float = 0.0) -> List[Dict[str, Any]]:
         """
-        匹配查询与主题摘要
+        匹配查询与主题摘要，支持关键词实体校验和多种相似度策略
         
         Args:
             query: 查询文本
@@ -56,7 +90,23 @@ class ThemeMatcher:
         Returns:
             匹配结果列表，每个结果包含摘要、ID和得分
         """
-        query_emb = self.model.encode(query)
+        # 从配置中获取匹配策略参数
+        matching_config = self.config.get("matching", {})
+        use_keyword_filter = matching_config.get("use_keyword_filter", True)
+        similarity_strategy = matching_config.get("similarity_strategy", "summary_vector")  # summary_vector, max_sentence, topic_center
+        default_min_score = matching_config.get("min_similarity_threshold", 0.3)
+        
+        # 使用配置中的阈值，如果参数未指定
+        if min_score == 0.0:
+            min_score = default_min_score
+        
+        if self.use_ollama:
+            # 使用Ollama API进行嵌入
+            query_emb = self.llm_client.embed([query])[0]
+        else:
+            # 使用本地SentenceTransformer模型进行嵌入
+            query_emb = self.model.encode(query)
+            
         sims = cosine_similarity([query_emb], self.embeddings)[0]
         
         # 先按相似度排序
@@ -65,19 +115,61 @@ class ThemeMatcher:
         # 过滤低于阈值的结果
         filtered_pairs = [(idx, score) for idx, score in sorted_pairs if score >= min_score]
         
+        # 关键词实体校验（如果启用）
+        if use_keyword_filter:
+            filtered_pairs = self._apply_keyword_filter(query, filtered_pairs)
+        
         # 取前top_k个结果
         top_pairs = filtered_pairs[:top_k]
         
         results = []
         for idx, score in top_pairs:
             node_id = self.summaries[idx].get("id", "")
+            title = self.summaries[idx].get("title", "无标题")
             results.append({
                 "summary": self.summaries[idx].get("summary", ""),
                 "node_id": node_id,  # 确保返回node_id字段
                 "id": node_id,        # 兼容性考虑
+                "title": title,       # 添加标题字段
                 "similarity": float(score),  # 添加similarity字段
                 "score": float(score)       # 兼容性考虑
             })
             
         logger.debug(f"查询 '{query}' 匹配到 {len(results)} 个主题，最高分: {results[0]['similarity'] if results else 0}")
         return results
+    
+    def _apply_keyword_filter(self, query: str, candidate_pairs: List[tuple]) -> List[tuple]:
+        """
+        应用关键词实体校验，过滤不包含查询关键词的候选
+        
+        Args:
+            query: 查询文本
+            candidate_pairs: 候选对列表 [(idx, score), ...]
+            
+        Returns:
+            过滤后的候选对列表
+        """
+        import jieba
+        
+        # 提取查询中的关键词（去除停用词）
+        stop_words = {'的', '了', '在', '是', '我', '有', '和', '就', '不', '人', '都', '一', '一个', '上', '也', '很', '到', '说', '要', '去', '你', '会', '着', '没有', '看', '好', '自己', '这'}
+        query_words = set(jieba.cut(query)) - stop_words
+        
+        if not query_words:
+            return candidate_pairs
+        
+        filtered_pairs = []
+        for idx, score in candidate_pairs:
+            summary_text = self.summaries[idx].get("summary", "")
+            title_text = self.summaries[idx].get("title", "")
+            combined_text = summary_text + " " + title_text
+            
+            # 检查是否包含至少一个查询关键词
+            summary_words = set(jieba.cut(combined_text))
+            if query_words & summary_words:  # 有交集
+                filtered_pairs.append((idx, score))
+            else:
+                # 降权但不完全过滤
+                filtered_pairs.append((idx, score * 0.5))
+        
+        return filtered_pairs

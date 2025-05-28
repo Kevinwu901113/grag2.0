@@ -9,14 +9,21 @@ llm:
 
 embedding:
   provider: "ollama"                     
-  model_name: "bge-m3:latest"
+  model_name: "BAAI/bge-m3"                   # 支持: bge-m3, text2vec, text-embedding-ada-002, all-MiniLM-L6-v2
   host: "http://localhost:11434"
+
+matching:
+  use_keyword_filter: true               # 是否启用关键词实体校验
+  similarity_strategy: "summary_vector"  # 相似度策略: summary_vector, max_sentence, topic_center
+  min_similarity_threshold: 0.3          # 最低匹配阈值
 
 document:
   input_dir: "./data"                   
-  chunk_size: 1000                      
-  chunk_overlap: 200                    
+  chunk_size: 1000                      # 每个块的最大字符数
+  chunk_overlap: 200                    # 块之间的重叠字符数
   allowed_types: [".docx", ".json"]     
+  similarity_threshold: 0.80            # 主题相似度阈值
+  redundancy_threshold: 0.95            # 冗余过滤阈值
 
 output:
   base_dir: "./result"                  
@@ -35,6 +42,7 @@ vector:                                 # ✅ 修正：应为 vector 而不是 i
 
 classifier:
   generate_samples: 300                # ✅ 已采用 base_classifier_samples.jsonl
+  bert_model: "bert-base-chinese"      # BERT模型名称
   finetune:
     enable: true
     base_model: "./result/base"        # ✅ fine-tune 用 base model 路径
@@ -42,6 +50,15 @@ classifier:
     output: "./result/fine_tuned"
     model: "bert-base-chinese"
 
+rerank:
+  enabled: true                        # 是否启用重排序
+  method: "simple"                     # 重排序方法: simple, llm
+  rerank_weights:                      # 重排序权重配置
+    vector: 0.4                        # 向量相似度权重
+    tfidf: 0.3                         # TF-IDF相似度权重
+    overlap: 0.2                       # 关键词重叠权重
+    diversity: 0.1                     # 多样性权重
+
 query:
   cache_enabled: true                  
-  max_history: 1000                    
+  max_history: 1000

@@ -36,14 +36,21 @@ class OllamaStrategy:
 
     def embed(self, texts):
         embeddings = []
-
+        
+        # 直接使用配置的嵌入模型
+        model_to_use = self.embedding_model
+        
         for text in texts:
             payload = {
-                "model": self.embedding_model,
+                "model": model_to_use,
                 "prompt": text,
                 "stream": False,
                 "options": self.options,
             }
+            
+            # 打印调试信息
+            print(f"[Ollama embed] 使用模型: {model_to_use} 生成嵌入")
+            
             r = requests.post(f"{self.host}/api/embeddings", json=payload)
 
             try:

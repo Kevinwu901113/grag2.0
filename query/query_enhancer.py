@@ -42,9 +42,9 @@ def enhance_query_classification(query, original_mode, original_precise):
         return original_mode, original_precise
     
     # 如果是norag模式，检查是否为实体查询
-    if original_mode == 'norag' and is_entity_query(query):
-        # 强制转为hybrid_imprecise模式
-        return 'hybrid_imprecise', False
+    # if original_mode == 'norag' and is_entity_query(query):
+    #     # 强制转为hybrid_imprecise模式
+    #     return 'hybrid_imprecise', False
     
     # 其他情况保持原始分类不变
     return original_mode, original_precise

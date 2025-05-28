@@ -4,8 +4,13 @@ import argparse
 import torch
 import joblib
 from torch.utils.data import DataLoader, Dataset
-from transformers import BertTokenizer, BertModel, AdamW
+from transformers import BertTokenizer, BertModel
+from torch.optim import AdamW
 from classifier.train_base_classifier import BERTClassifier
+from utils.model_cache import model_cache, ensure_cache_dir
+from utils.logger import setup_logger
+
+logger = setup_logger(os.getcwd())
 
 class QueryDataset(Dataset):
     def __init__(self, data_path, tokenizer, label_encoder, max_length=128):
@@ -32,17 +37,32 @@ class QueryDataset(Dataset):
 
 def finetune_model(base_dir, data_path, output_path, model_name="bert-base-chinese", epochs=300, batch_size=16, lr=2e-5):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    cache_dir = os.getenv('HF_CACHE_DIR', './hf_models')
-    os.makedirs(cache_dir, exist_ok=True)
-    tokenizer = BertTokenizer.from_pretrained(model_name, cache_dir=cache_dir)
-    label_encoder = joblib.load(os.path.join(base_dir, "label_encoder.pkl"))
+    cache_dir = ensure_cache_dir(os.getenv('HF_CACHE_DIR', './hf_models'))
+    
+    # 使用模型缓存获取tokenizer，优先使用本地缓存
+    tokenizer = model_cache.get_tokenizer(model_name, cache_dir=cache_dir)
+    if tokenizer is None:
+        logger.error(f"无法加载tokenizer: {model_name}，请检查模型路径或网络连接")
+        return
+        
+    label_encoder_path = os.path.join(base_dir, "label_encoder.pkl")
+    # 使用模型缓存获取label_encoder
+    label_encoder = model_cache.get_label_encoder(label_encoder_path)
+    if label_encoder is None:
+        logger.error(f"无法加载标签编码器: {label_encoder_path}")
+        return
 
     dataset = QueryDataset(data_path, tokenizer, label_encoder)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
     model = BERTClassifier(model_name, cache_dir=cache_dir, num_labels=len(label_encoder.classes_))
-    model.load_state_dict(torch.load(os.path.join(base_dir, "query_classifier.pt")))
-    model.to(device)
+    model_path = os.path.join(base_dir, "query_classifier.pt")
+    try:
+        model.load_state_dict(torch.load(model_path, map_location=device))
+        model.to(device)
+    except Exception as e:
+        logger.error(f"加载模型失败: {e}")
+        return
 
     optimizer = AdamW(model.parameters(), lr=lr)
     criterion = torch.nn.CrossEntropyLoss()

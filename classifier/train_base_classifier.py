@@ -50,13 +50,19 @@ def load_data(jsonl_path):
 
 def get_or_download_tokenizer(model_name, cache_dir=None):
     if cache_dir is None:
-        cache_dir = os.getenv('HF_CACHE_DIR', './hf_models')
+        # 使用项目根目录下的hf_models文件夹
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        cache_dir = os.path.join(project_root, 'hf_models')
+    
     os.makedirs(cache_dir, exist_ok=True)
+    print(f"📁 使用缓存目录: {cache_dir}")
+    
     try:
+        print(f"🔍 尝试从缓存加载 tokenizer: {model_name}")
         return BertTokenizer.from_pretrained(model_name, cache_dir=cache_dir)
     except (OSError, ValueError, RuntimeError) as e:
         print(f"⚠️ 加载 tokenizer 失败: {e}")
-        print("⏬ 尝试重新下载 tokenizer...")
+        print(f"⏬ 开始下载 tokenizer 到: {cache_dir}")
         return BertTokenizer.from_pretrained(model_name, cache_dir=cache_dir, force_download=True)
 
 def train_model(data_path, output_dir, model_name, num_epochs=30, batch_size=16, lr=2e-5):
@@ -70,11 +76,14 @@ def train_model(data_path, output_dir, model_name, num_epochs=30, batch_size=16,
     encoded_labels = label_encoder.fit_transform(labels)
     num_labels = len(label_encoder.classes_)
 
-    tokenizer = get_or_download_tokenizer(model_name)
+    # 使用项目根目录下的hf_models文件夹
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cache_dir = os.path.join(project_root, 'hf_models')
+    
+    tokenizer = get_or_download_tokenizer(model_name, cache_dir)
     dataset = QueryDataset(queries, encoded_labels, tokenizer)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
-    cache_dir = os.getenv('HF_CACHE_DIR', './hf_models')
     model = BERTClassifier(model_name, num_labels, cache_dir=cache_dir)
     model.to(device)
 

@@ -6,7 +6,13 @@ import torch
 from llm.llm import LLMClient
 from utils.output_manager import resolve_work_dir
 from utils.misc import init_logger
-from sentence_transformers import SentenceTransformer, util
+
+# 条件导入SentenceTransformer，避免在只使用Ollama API时出错
+try:
+    from sentence_transformers import SentenceTransformer, util
+    SENTENCE_TRANSFORMER_AVAILABLE = True
+except ImportError:
+    SENTENCE_TRANSFORMER_AVAILABLE = False
 
 PROMPT_TEMPLATE = """你是一名专业的AI助手，负责为训练一个多领域查询分类器构造高质量的样本数据。
 
@@ -84,7 +90,14 @@ def parse_response(text):
 
 def generate_queries(config: dict, num: int, output_path: str, logger):
     llm = LLMClient(config)
-    model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
+    
+    # 检查SentenceTransformer是否可用
+    if not SENTENCE_TRANSFORMER_AVAILABLE:
+        logger.error("SentenceTransformer库未安装，无法进行语义相似度检查。将跳过相似度检查步骤。")
+        model = None
+    else:
+        model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
+        
     batch_size = 50
     existing_queries = set()
     existing_list = []
@@ -101,7 +114,7 @@ def generate_queries(config: dict, num: int, output_path: str, logger):
                 except (json.JSONDecodeError, KeyError) as e:
                     logger.warning(f"解析已有样本失败: {line.strip()}, 错误: {e}")
                     continue
-        if existing_list:
+        if existing_list and model is not None:
             existing_emb = model.encode(existing_list, convert_to_tensor=True)
         logger.info(f"已检测到已有样本 {len(existing_queries)} 条，将跳过这些样本。")
 
@@ -125,18 +138,24 @@ def generate_queries(config: dict, num: int, output_path: str, logger):
                 if query in existing_queries:
                     continue
 
-                query_emb = model.encode([query], convert_to_tensor=True)
-                if existing_emb is not None:
-                    similarity = util.cos_sim(query_emb, existing_emb)
-                    if similarity.max().item() >= 0.9:
-                        continue
+                # 只有在SentenceTransformer可用时才进行相似度检查
+                if model is not None and SENTENCE_TRANSFORMER_AVAILABLE:
+                    query_emb = model.encode([query], convert_to_tensor=True)
+                    if existing_emb is not None:
+                        similarity = util.cos_sim(query_emb, existing_emb)
+                        if similarity.max().item() >= 0.9:
+                            continue
+                else:
+                    query_emb = None
 
                 json.dump(item, f, ensure_ascii=False)
                 f.write("\n")
                 f.flush()
                 existing_queries.add(query)
                 existing_list.append(query)
-                existing_emb = query_emb if existing_emb is None else torch.cat((existing_emb, query_emb), dim=0)
+                # 只有在SentenceTransformer可用时才更新embedding
+                if model is not None and query_emb is not None:
+                    existing_emb = query_emb if existing_emb is None else torch.cat((existing_emb, query_emb), dim=0)
                 generated += 1
 
             logger.info(f"当前已生成并写入总数：{generated}/{remaining}")

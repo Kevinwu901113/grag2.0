@@ -27,13 +27,19 @@ def run_vector_indexer(config: dict, work_dir: str, logger=None):
     with open(chunk_path, 'r', encoding='utf-8') as f:
         chunks = json.load(f)
 
+    # 获取嵌入配置
+    embedding_config = config.get("embedding", {})
+    provider = embedding_config.get("provider", "ollama")
+    model_name = embedding_config.get("model_name", "bge-m3")
+    
+    # 初始化LLM客户端
     llm = LLMClient(config)
     texts = [c['text'] for c in chunks]
     ids = [c['id'] for c in chunks]
     
     # 获取批处理大小，默认为100
     batch_size = config.get("vector", {}).get("batch_size", 100)
-    logger.info(f"开始生成嵌入，共 {len(texts)} 条文本，批处理大小: {batch_size}")
+    logger.info(f"开始生成嵌入，使用{provider}的{model_name}模型，共{len(texts)}条文本，批处理大小: {batch_size}")
 
     # 使用批处理生成嵌入
     all_embeddings = []
@@ -69,11 +75,17 @@ def run_vector_indexer(config: dict, work_dir: str, logger=None):
     efSearch = vec_config.get("ef_search", 32)
 
     if index_type == "IVF":
-        logger.info(f"构建 IVF 索引（nlist={nlist}）...")
+        # 确保nlist不超过训练数据数量
+        num_samples = len(embeddings_np)
+        adjusted_nlist = min(nlist, num_samples)
+        if adjusted_nlist != nlist:
+            logger.warning(f"训练数据数量({num_samples})少于配置的nlist({nlist})，自动调整为{adjusted_nlist}")
+        
+        logger.info(f"构建 IVF 索引（nlist={adjusted_nlist}）...")
         quantizer = faiss.IndexFlatL2(dim)
-        index = faiss.IndexIVFFlat(quantizer, dim, nlist, faiss.METRIC_L2)
+        index = faiss.IndexIVFFlat(quantizer, dim, adjusted_nlist, faiss.METRIC_L2)
         index.train(embeddings_np)
-        index.nprobe = nprobe
+        index.nprobe = min(nprobe, adjusted_nlist)  # nprobe也不能超过nlist
     elif index_type == "HNSW":
         logger.info(f"构建 HNSW 索引（efSearch={efSearch}）...")
         index = faiss.IndexHNSWFlat(dim, 32)
