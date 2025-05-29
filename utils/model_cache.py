@@ -1,10 +1,21 @@
 from typing import Dict, Any, Optional
 import os
-import torch
 import joblib
 from pathlib import Path
-from transformers import BertTokenizer
 from utils.logger import setup_logger
+
+# 条件导入torch和transformers，避免在轻量级模式下出错
+try:
+    import torch
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+
+try:
+    from transformers import BertTokenizer
+    TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    TRANSFORMERS_AVAILABLE = False
 
 # 条件导入SentenceTransformer，避免在只使用Ollama API时出错
 try:
@@ -40,27 +51,27 @@ class ModelCache:
     
     def get_bert_model(self, model_path: str, num_labels: int, model_name: str = "bert-base-chinese", cache_dir: str = None) -> Any:
         """获取BERT模型，如果已加载则直接返回缓存的模型"""
+        if not TORCH_AVAILABLE or not TRANSFORMERS_AVAILABLE:
+            logger.warning("torch或transformers不可用，跳过BERT模型加载")
+            return None
+            
         if model_path in self._models:
             return self._models[model_path]
         
-        from classifier.train_base_classifier import BERTClassifier
-        
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model = BERTClassifier(model_name=model_name, num_labels=num_labels)
-        
         try:
-            model.load_state_dict(torch.load(model_path, map_location=device))
-            model.to(device)
-            model.eval()
-            self._models[model_path] = model
-            logger.info(f"已加载BERT模型: {model_path}")
-            return model
-        except (FileNotFoundError, RuntimeError, ValueError) as e:
+            # BERTClassifier已移除，轻量级分类器不需要加载BERT模型
+            logger.warning(f"BERT模型加载功能已移除，跳过加载: {model_path}")
+            return None
+        except (FileNotFoundError, RuntimeError, ImportError) as e:
             logger.error(f"加载BERT模型失败: {e}")
             return None
     
-    def get_tokenizer(self, model_name: str, cache_dir: str = None) -> Optional[BertTokenizer]:
+    def get_tokenizer(self, model_name: str, cache_dir: str = None) -> Optional[Any]:
         """获取tokenizer，如果已加载则直接返回缓存的tokenizer"""
+        if not TRANSFORMERS_AVAILABLE:
+            logger.warning("transformers不可用，跳过tokenizer加载")
+            return None
+            
         if model_name in self._tokenizers:
             return self._tokenizers[model_name]
         
@@ -70,7 +81,7 @@ class ModelCache:
             self._tokenizers[model_name] = tokenizer
             logger.info(f"已加载Tokenizer: {model_name}")
             return tokenizer
-        except Exception as e:
+        except (OSError, ValueError, ConnectionError) as e:
             logger.error(f"加载Tokenizer失败: {e}")
             return None
     

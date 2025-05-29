@@ -1,13 +1,8 @@
 import os
 from typing import List, Dict, Any, Optional
 from sklearn.metrics.pairwise import cosine_similarity
-from utils.model_cache import model_cache, SENTENCE_TRANSFORMER_AVAILABLE
 from utils.logger import setup_logger
 from llm.llm import LLMClient
-
-# 条件导入SentenceTransformer，避免在只使用Ollama API时出错
-if SENTENCE_TRANSFORMER_AVAILABLE:
-    from sentence_transformers import SentenceTransformer
 
 logger = setup_logger(os.getcwd())
 
@@ -17,41 +12,10 @@ class ThemeMatcher:
     优化版本：从配置中读取模型名称，使用模型缓存，支持多种嵌入模型
     """
     def __init__(self, theme_summaries: List[Dict[str, Any]], config: Optional[Dict[str, Any]] = None):
-        # 从配置中读取模型名称，支持多种嵌入模型
+        # 统一使用LLMClient进行嵌入向量生成
         self.config = config or {}
-        embedding_config = self.config.get("embedding", {})
+        self.llm_client = LLMClient(self.config)
         
-        # 支持的模型映射（用于本地SentenceTransformer模型）
-        model_mapping = {
-            "text2vec": "shibing624/text2vec-base-chinese",
-            "text-embedding-ada-002": "all-MiniLM-L6-v2",  # OpenAI模型的本地替代
-            "all-MiniLM-L6-v2": "all-MiniLM-L6-v2"
-        }
-        
-        model_name = embedding_config.get("model_name", "bge-m3")
-        provider = embedding_config.get("provider", "ollama")
-        
-        self.use_ollama = False
-        # 如果是bge-m3模型且provider是ollama，使用ollama的嵌入API
-        if model_name == "bge-m3" or model_name == "BAAI/bge-m3" and provider == "ollama":
-            logger.info(f"使用Ollama API调用BGE-M3模型进行嵌入")
-            self.llm_client = LLMClient(self.config)
-            self.use_ollama = True
-            self.model = None
-        else:
-            # 检查SentenceTransformer是否可用
-            if not SENTENCE_TRANSFORMER_AVAILABLE:
-                logger.error(f"SentenceTransformer库未安装，无法使用本地模型。请使用Ollama API或安装sentence-transformers库。")
-                raise ImportError("SentenceTransformer库未安装，无法使用本地模型。请使用Ollama API或安装sentence-transformers库。")
-                
-            # 否则使用本地SentenceTransformer模型
-            actual_model_name = model_mapping.get(model_name, model_name)
-            # 使用模型缓存获取模型
-            self.model = model_cache.get_sentence_transformer(actual_model_name)
-            if self.model is None:
-                logger.warning(f"无法加载模型 {actual_model_name}，尝试使用默认模型")
-                self.model = SentenceTransformer("all-MiniLM-L6-v2")
-            
         self.summaries = theme_summaries
         logger.info(f"正在编码 {len(theme_summaries)} 个主题摘要...")
         
@@ -66,12 +30,8 @@ class ThemeMatcher:
         with get_progress_bar(total=len(summaries_text), desc="编码主题摘要") as pbar:
             for i in range(0, len(summaries_text), batch_size):
                 batch = summaries_text[i:i+batch_size]
-                if self.use_ollama:
-                    # 使用Ollama API进行嵌入
-                    batch_embeddings = self.llm_client.embed(batch)
-                else:
-                    # 使用本地SentenceTransformer模型进行嵌入
-                    batch_embeddings = self.model.encode(batch)
+                # 统一使用LLMClient的embed接口
+                batch_embeddings = self.llm_client.embed(batch)
                 all_embeddings.extend(batch_embeddings)
                 pbar.update(len(batch))
         
@@ -100,12 +60,8 @@ class ThemeMatcher:
         if min_score == 0.0:
             min_score = default_min_score
         
-        if self.use_ollama:
-            # 使用Ollama API进行嵌入
-            query_emb = self.llm_client.embed([query])[0]
-        else:
-            # 使用本地SentenceTransformer模型进行嵌入
-            query_emb = self.model.encode(query)
+        # 统一使用LLMClient的embed接口
+        query_emb = self.llm_client.embed(query)[0]
             
         sims = cosine_similarity([query_emb], self.embeddings)[0]
         

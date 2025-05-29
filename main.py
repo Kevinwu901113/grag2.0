@@ -12,68 +12,15 @@ from graph.graph_builder import run_graph_construction
 from vector.optimized_vector_indexer import run_vector_indexer
 from query.query_handler import run_query_loop
 
-# 分类器模块（已统一为bert-based）
-from classifier.train_base_classifier import train_model
-from classifier.finetune_classifier import finetune_model
-from classifier.evaluate_with_llm import evaluate_sample
-from generate_base_classifier_data import generate_samples
+# 轻量级分类器模块（无需训练）
+# 移除了原有的BERT训练和微调模块
 
 def load_config(config_path="config.yaml"):
     with open(config_path, 'r', encoding='utf-8') as f:
         return yaml.safe_load(f)
 
-def check_and_generate_training_data(config, work_dir, logger):
-    sample_path = os.path.join(work_dir, "base_classifier_samples.jsonl")
-    required_samples = config.get("classifier", {}).get("generate_samples", 30)
-    existing = 0
-    if os.path.exists(sample_path):
-        with open(sample_path, 'r', encoding='utf-8') as f:
-            existing = sum(1 for _ in f)
-    if existing < required_samples:
-        logger.info(f"检测到样本数量不足（当前: {existing}，期望: {required_samples}），开始生成...")
-        generate_samples(config, required_samples, sample_path, logger)
-    else:
-        logger.info(f"样本数量充足，共有 {existing} 条，跳过生成。")
-
-def maybe_run_finetune(config, work_dir, logger):
-    ft_config = config.get("classifier", {}).get("finetune")
-    if not ft_config or not ft_config.get("enable", False):
-        return
-    logger.info("⚙️ 启用微调流程...")
-    
-    # base_model应该指向work_dir内的base目录
-    base_model_path = ft_config["base_model"]
-    if base_model_path.startswith("./result/"):
-        # 如果配置中是./result/base这样的路径，则改为相对于work_dir的路径
-        relative_path = base_model_path.replace("./result/", "")
-        base_dir = os.path.join(work_dir, relative_path)
-    elif os.path.isabs(base_model_path):
-        base_dir = base_model_path
-    else:
-        base_dir = os.path.join(work_dir, base_model_path)
-    
-    # 处理data路径
-    data_path_config = ft_config["data"]
-    if data_path_config.startswith("./result/"):
-        data_relative_path = data_path_config.replace("./result/", "")
-        data_path = os.path.join(work_dir, data_relative_path)
-    else:
-        data_path = os.path.join(work_dir, data_path_config)
-    
-    # 处理output路径
-    output_path_config = ft_config["output"]
-    if output_path_config.startswith("./result/"):
-        output_relative_path = output_path_config.replace("./result/", "")
-        output_path = os.path.join(work_dir, output_relative_path)
-    else:
-        output_path = os.path.join(work_dir, output_path_config)
-    
-    finetune_model(
-        base_dir=base_dir,
-        data_path=data_path,
-        output_path=output_path,
-        model_name=ft_config.get("model", "bert-base-chinese")
-    )
+# 轻量级分类器无需训练数据生成和微调
+# 移除了原有的训练数据检查和微调函数
 
 def main():
     parser = argparse.ArgumentParser()
@@ -89,7 +36,6 @@ def main():
 
     if args.debug == "doc":
         run_document_processing(config, work_dir, logger)
-        check_and_generate_training_data(config, work_dir, logger)
         return
     elif args.debug == "graph":
         run_graph_construction(config, work_dir, logger)
@@ -98,30 +44,16 @@ def main():
         run_vector_indexer(config, work_dir, logger)
         return
     elif args.debug == "classifier":
-        # 训练基础分类器
-        check_and_generate_training_data(config, work_dir, logger)
-        sample_path = os.path.join(work_dir, "base_classifier_samples.jsonl")
-        output_dir = os.path.join(work_dir, "base")
-        model_name = config.get("classifier", {}).get("bert_model", "bert-base-chinese")
-        train_model(sample_path, output_dir, model_name)
-        maybe_run_finetune(config, work_dir, logger)
+        # 轻量级分类器无需训练，直接跳过
+        logger.info("轻量级分类器无需训练，跳过分类器模块")
         return
     elif args.debug == "query":
         run_query_loop(config, work_dir, logger)
         return
 
-    # 默认完整流程
+    # 默认完整流程（跳过分类器训练）
     run_document_processing(config, work_dir, logger)
-    check_and_generate_training_data(config, work_dir, logger)
-    
-    # 先训练基础分类器，生成label_encoder.pkl
-    sample_path = os.path.join(work_dir, "base_classifier_samples.jsonl")
-    output_dir = os.path.join(work_dir, "base")
-    model_name = config.get("classifier", {}).get("bert_model", "bert-base-chinese")
-    train_model(sample_path, output_dir, model_name)
-    
-    # 然后再进行微调（如果启用）
-    maybe_run_finetune(config, work_dir, logger)
+    logger.info("使用轻量级分类器，跳过分类器训练步骤")
     
     run_graph_construction(config, work_dir, logger)
     run_vector_indexer(config, work_dir, logger)

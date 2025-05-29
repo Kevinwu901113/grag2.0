@@ -1,0 +1,190 @@
+#!/usr/bin/env python3
+"""
+统一的文件I/O工具函数
+整合项目中重复出现的文件加载、保存操作
+"""
+
+import os
+import json
+import faiss
+import networkx as nx
+from typing import List, Dict, Any, Tuple, Optional
+from networkx.readwrite import json_graph
+
+
+def load_json(file_path: str, default=None, encoding='utf-8'):
+    """
+    统一的JSON文件加载函数
+    
+    Args:
+        file_path: JSON文件路径
+        default: 加载失败时的默认返回值
+        encoding: 文件编码
+        
+    Returns:
+        加载的JSON数据或默认值
+    """
+    try:
+        with open(file_path, 'r', encoding=encoding) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, IOError) as e:
+        print(f"❌ 加载JSON文件失败 {file_path}: {e}")
+        return default if default is not None else []
+
+
+def save_json(data: Any, file_path: str, encoding='utf-8', ensure_ascii=False, indent=2):
+    """
+    统一的JSON文件保存函数
+    
+    Args:
+        data: 要保存的数据
+        file_path: 保存路径
+        encoding: 文件编码
+        ensure_ascii: 是否确保ASCII编码
+        indent: 缩进空格数
+    """
+    try:
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        with open(file_path, 'w', encoding=encoding) as f:
+            json.dump(data, f, ensure_ascii=ensure_ascii, indent=indent)
+    except (IOError, OSError) as e:
+        print(f"❌ 保存JSON文件失败 {file_path}: {e}")
+        raise
+
+
+def load_chunks(work_dir: str) -> List[Dict[str, Any]]:
+    """
+    统一的文档块加载函数
+    
+    Args:
+        work_dir: 工作目录
+        
+    Returns:
+        文档块列表
+    """
+    chunk_path = os.path.join(work_dir, "chunks.json")
+    return load_json(chunk_path, default=[])
+
+
+def save_chunks(chunks: List[Dict[str, Any]], work_dir: str):
+    """
+    统一的文档块保存函数
+    
+    Args:
+        chunks: 文档块列表
+        work_dir: 工作目录
+    """
+    chunk_path = os.path.join(work_dir, "chunks.json")
+    save_json(chunks, chunk_path)
+
+
+def load_vector_index(work_dir: str) -> Tuple[Optional[Any], Dict[str, Any]]:
+    """
+    统一的向量索引加载函数
+    
+    Args:
+        work_dir: 工作目录
+        
+    Returns:
+        (faiss索引对象, ID映射字典)
+    """
+    try:
+        index_path = os.path.join(work_dir, "vector.index")
+        mapping_path = os.path.join(work_dir, "embedding_map.json")
+        
+        index = faiss.read_index(index_path)
+        id_map = load_json(mapping_path, default={})
+        
+        return index, id_map
+    except (FileNotFoundError, IOError) as e:
+        print(f"❌ 加载向量索引失败: {e}")
+        return None, {}
+
+
+def save_vector_index(index: Any, id_map: Dict[str, Any], work_dir: str):
+    """
+    统一的向量索引保存函数
+    
+    Args:
+        index: faiss索引对象
+        id_map: ID映射字典
+        work_dir: 工作目录
+    """
+    try:
+        os.makedirs(work_dir, exist_ok=True)
+        index_path = os.path.join(work_dir, "vector.index")
+        mapping_path = os.path.join(work_dir, "embedding_map.json")
+        
+        faiss.write_index(index, index_path)
+        save_json(id_map, mapping_path)
+    except (IOError, OSError) as e:
+        print(f"❌ 保存向量索引失败: {e}")
+        raise
+
+
+def load_graph(work_dir: str) -> Optional[nx.Graph]:
+    """
+    统一的图谱加载函数
+    
+    Args:
+        work_dir: 工作目录
+        
+    Returns:
+        NetworkX图对象或None
+    """
+    graph_path = os.path.join(work_dir, "graph.json")
+    try:
+        data = load_json(graph_path)
+        if data:
+            return json_graph.node_link_graph(data)
+        return None
+    except Exception as e:
+        print(f"❌ 加载图谱失败: {e}")
+        return None
+
+
+def save_graph(graph: nx.Graph, work_dir: str):
+    """
+    统一的图谱保存函数
+    
+    Args:
+        graph: NetworkX图对象
+        work_dir: 工作目录
+    """
+    try:
+        os.makedirs(work_dir, exist_ok=True)
+        
+        # 保存JSON格式
+        graph_json = json_graph.node_link_data(graph)
+        graph_path = os.path.join(work_dir, "graph.json")
+        save_json(graph_json, graph_path)
+        
+        # 可选保存GraphML格式供可视化
+        graphml_path = os.path.join(work_dir, "graph.graphml")
+        nx.write_graphml(graph, graphml_path)
+    except Exception as e:
+        print(f"❌ 保存图谱失败: {e}")
+        raise
+
+
+def ensure_dir_exists(dir_path: str):
+    """
+    确保目录存在
+    
+    Args:
+        dir_path: 目录路径
+    """
+    os.makedirs(dir_path, exist_ok=True)
+
+
+def file_exists(file_path: str) -> bool:
+    """
+    检查文件是否存在
+    
+    Args:
+        file_path: 文件路径
+        
+    Returns:
+        文件是否存在
+    """
+    return os.path.exists(file_path) and os.path.isfile(file_path)

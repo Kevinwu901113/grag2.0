@@ -4,10 +4,7 @@ import json
 import networkx as nx
 from llm.llm import LLMClient
 from networkx.readwrite import json_graph
-
-def load_chunks(chunk_path: str) -> list[dict]:
-    with open(chunk_path, 'r', encoding='utf-8') as f:
-        return json.load(f)
+from utils.io import load_json, save_graph
 
 def extract_entities_and_relations(text: str, llm_client: LLMClient):
     """
@@ -134,23 +131,14 @@ def build_graph(chunks: list[dict], llm_client: LLMClient):
 
     return G
 
-def save_graph(graph: nx.DiGraph, output_dir: str):
-    os.makedirs(output_dir, exist_ok=True)
-
-    # ✅ 使用 node-link 格式保存 JSON
-    graph_json = json_graph.node_link_data(graph)
-    with open(os.path.join(output_dir, "graph.json"), "w", encoding="utf-8") as f:
-        json.dump(graph_json, f, ensure_ascii=False, indent=2)
-
-    # ✅ 可选保存 GraphML 供可视化
-    nx.write_graphml(graph, os.path.join(output_dir, "graph.graphml"))
+# save_graph函数已移至utils.io模块
 
 def run_graph_construction(config: dict, work_dir: str, logger):
     chunk_path = os.path.join(work_dir, "chunks.json")
     output_dir = os.path.join(work_dir)
 
     logger.info(f"加载文本块: {chunk_path}")
-    chunks = load_chunks(chunk_path)
+    chunks = load_json(chunk_path)
 
     llm_client = LLMClient(config["llm"])
 

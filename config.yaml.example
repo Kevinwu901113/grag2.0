@@ -19,8 +19,8 @@ matching:
 
 document:
   input_dir: "./data"                   
-  chunk_size: 1000                      # 每个块的最大字符数
-  chunk_overlap: 200                    # 块之间的重叠字符数
+  chunk_size: 800                       # 每个块的最大字符数（已优化）
+  chunk_overlap: 300                    # 块之间的重叠字符数（已优化）
   allowed_types: [".docx", ".json"]     
   similarity_threshold: 0.80            # 主题相似度阈值
   redundancy_threshold: 0.95            # 冗余过滤阈值
@@ -40,15 +40,8 @@ vector:                                 # ✅ 修正：应为 vector 而不是 i
   nprobe: 10                            # IVF查询时使用
   ef_search: 32                         # HNSW 查询时使用
 
-classifier:
-  generate_samples: 300                # ✅ 已采用 base_classifier_samples.jsonl
-  bert_model: "bert-base-chinese"      # BERT模型名称
-  finetune:
-    enable: true
-    base_model: "./result/base"        # ✅ fine-tune 用 base model 路径
-    data: "./result/base_classifier_samples.jsonl"
-    output: "./result/fine_tuned"
-    model: "bert-base-chinese"
+# 轻量级分类器配置（无需训练）
+# 原有的BERT分类器和微调配置已移除，现使用基于规则的轻量级分类器
 
 rerank:
   enabled: true                        # 是否启用重排序
@@ -62,3 +55,26 @@ rerank:
 query:
   cache_enabled: true                  
   max_history: 1000
+
+enhanced_retrieval:                    # 增强检索配置
+  enable_query_expansion: true         # 是否启用查询扩展
+  enable_bm25: true                    # 是否启用BM25检索
+  enable_graph_retrieval: true         # 是否启用图谱实体检索
+  vector_top_k: 10                     # 向量检索返回数量
+  bm25_top_k: 5                        # BM25检索返回数量
+  final_top_k: 5                       # 最终返回结果数量
+  bm25_params:                         # BM25参数
+    k1: 1.5                            # 词频饱和参数
+    b: 0.75                            # 长度归一化参数
+  graph_params:                        # 图谱检索参数
+    enable_pagerank: false             # 是否启用PageRank实体加权
+    pagerank_alpha: 0.85               # PageRank阻尼系数
+    entity_weight_factor: 0.1          # 实体权重影响因子
+
+answer_selector:                       # 多候选答案生成和选择配置
+  num_candidates: 3                    # 候选答案数量
+  max_answer_length: 500               # 单个答案最大长度
+  enable_for_complex_queries: true     # 是否对复杂问题启用多候选机制
+  complexity_threshold:                # 复杂度判断阈值
+    min_length: 50                     # 查询最小长度
+    min_entities: 3                    # 最小实体数量

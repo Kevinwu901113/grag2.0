@@ -19,13 +19,14 @@ def run_vector_indexer(config: dict, work_dir: str, logger=None):
     if logger is None:
         logger = setup_logger(work_dir)
     
+    from utils.io import load_chunks, save_vector_index, file_exists
+    
     chunk_path = os.path.join(work_dir, "chunks.json")
-    if not os.path.exists(chunk_path):
+    if not file_exists(chunk_path):
         logger.error("未找到 chunks.json，无法构建向量索引。请先运行文档处理模块。")
         return
 
-    with open(chunk_path, 'r', encoding='utf-8') as f:
-        chunks = json.load(f)
+    chunks = load_chunks(work_dir)
 
     # 获取嵌入配置
     embedding_config = config.get("embedding", {})
@@ -82,26 +83,25 @@ def run_vector_indexer(config: dict, work_dir: str, logger=None):
             logger.warning(f"训练数据数量({num_samples})少于配置的nlist({nlist})，自动调整为{adjusted_nlist}")
         
         logger.info(f"构建 IVF 索引（nlist={adjusted_nlist}）...")
-        quantizer = faiss.IndexFlatL2(dim)
-        index = faiss.IndexIVFFlat(quantizer, dim, adjusted_nlist, faiss.METRIC_L2)
+        quantizer = faiss.IndexFlatIP(dim)  # 使用内积索引
+        index = faiss.IndexIVFFlat(quantizer, dim, adjusted_nlist, faiss.METRIC_INNER_PRODUCT)
         index.train(embeddings_np)
         index.nprobe = min(nprobe, adjusted_nlist)  # nprobe也不能超过nlist
     elif index_type == "HNSW":
         logger.info(f"构建 HNSW 索引（efSearch={efSearch}）...")
-        index = faiss.IndexHNSWFlat(dim, 32)
+        index = faiss.IndexHNSWFlat(dim, 32, faiss.METRIC_INNER_PRODUCT)
         index.hnsw.efSearch = efSearch
     else:
         logger.info(f"构建 Flat 索引...")
-        index = faiss.IndexFlatL2(dim)
+        index = faiss.IndexFlatIP(dim)  # 使用内积索引
 
+    # 归一化向量以确保内积等于余弦相似度
+    faiss.normalize_L2(embeddings_np)
     index.add(embeddings_np)
 
-    faiss_path = os.path.join(work_dir, "vector.index")
-    mapping_path = os.path.join(work_dir, "embedding_map.json")
-    faiss.write_index(index, faiss_path)
-
-    with open(mapping_path, 'w', encoding='utf-8') as f:
-        json.dump({i: ids[i] for i in range(len(ids))}, f, ensure_ascii=False, indent=2)
+    # 使用统一的保存函数
+    id_map = {i: ids[i] for i in range(len(ids))}
+    save_vector_index(index, id_map, work_dir)
 
     logger.info(f"✅ 向量索引构建完成：{index_type}，维度 {dim}，共 {len(all_embeddings)} 条")
-    logger.info(f"索引文件保存至 {faiss_path}，映射关系保存至 {mapping_path}")
+    logger.info(f"索引文件已保存至工作目录 {work_dir}")

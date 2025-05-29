@@ -27,7 +27,22 @@ class LLMClient:
     def generate(self, prompt: str) -> str:
         return self.strategy.generate(prompt)
 
-    def embed(self, texts: List[str]) -> List[List[float]]:
+    def embed(self, texts) -> List[List[float]]:
+        """
+        统一的嵌入向量生成接口
+        
+        Args:
+            texts: 文本或文本列表，支持 str 或 List[str]
+            
+        Returns:
+            嵌入向量列表，格式为 List[List[float]]
+        """
+        # 统一处理输入格式
+        if isinstance(texts, str):
+            texts = [texts]
+        elif not isinstance(texts, list):
+            raise ValueError("输入必须是字符串或字符串列表")
+            
         if not texts:
             raise ValueError("输入文本列表为空")
         

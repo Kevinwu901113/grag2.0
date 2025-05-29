@@ -24,7 +24,7 @@ def split_into_sentences(text: str) -> List[str]:
     sentences = re.split(pattern, text)
     return [s.strip() for s in sentences if s.strip()]
 
-def split_into_chunks_with_overlap(text: str, chunk_size: int = 1000, chunk_overlap: int = 200) -> List[str]:
+def split_into_chunks_with_overlap(text: str, chunk_size: int = 800, chunk_overlap: int = 300) -> List[str]:
     """
     改进的分块策略：支持段落合并和chunk_size限制，引入chunk_overlap
     
@@ -36,67 +36,167 @@ def split_into_chunks_with_overlap(text: str, chunk_size: int = 1000, chunk_over
     Returns:
         分块后的文本列表
     """
+    # 调用智能分块函数
+    return intelligent_chunk_splitting(text, chunk_size, chunk_overlap)
+
+def intelligent_chunk_splitting(text: str, chunk_size: int = 800, chunk_overlap: int = 300) -> List[str]:
+    """
+    智能分块策略：
+    1. 优先按段落切分
+    2. 对长度异常的段落，按句子重组再合并
+    3. 确保重要内容不被块边界切分丢失
+    4. 使生成的chunk在语义上更集中
+    
+    Args:
+        text: 输入文本
+        chunk_size: 每个块的最大字符数
+        chunk_overlap: 块之间的重叠字符数
+        
+    Returns:
+        分块后的文本列表
+    """
+    # 检测文本中的标题和段落结构
+    # 标题模式：# 标题、## 二级标题、数字编号等
+    title_pattern = r'(^|\n)(#+\s+|\d+\.\s+|第[一二三四五六七八九十]+[章节]\s+)'
+    has_structure = bool(re.search(title_pattern, text))
+    
     # 首先按段落分割
     paragraphs = [p.strip() for p in text.split('\n') if p.strip()]
     
     chunks = []
     current_chunk = ""
     
-    for para in paragraphs:
-        # 如果当前段落加上现有块不超过限制，则合并
-        if len(current_chunk) + len(para) + 1 <= chunk_size:
-            if current_chunk:
-                current_chunk += "\n" + para
-            else:
-                current_chunk = para
-        else:
-            # 保存当前块
-            if current_chunk:
-                chunks.append(current_chunk)
+    # 如果文本有明显的结构，优先保持结构完整性
+    if has_structure:
+        for para in paragraphs:
+            # 检测是否为标题行
+            is_title = bool(re.match(r'^(#+\s+|\d+\.\s+|第[一二三四五六七八九十]+[章节]\s+)', para))
             
-            # 如果单个段落超过chunk_size，需要进一步分割
-            if len(para) > chunk_size:
-                # 按句子分割长段落
-                sentences = split_into_sentences(para)
-                temp_chunk = ""
-                
-                for sentence in sentences:
-                    if len(temp_chunk) + len(sentence) + 1 <= chunk_size:
-                        if temp_chunk:
-                            temp_chunk += " " + sentence
-                        else:
-                            temp_chunk = sentence
-                    else:
-                        if temp_chunk:
-                            chunks.append(temp_chunk)
-                        temp_chunk = sentence
-                
-                if temp_chunk:
-                    current_chunk = temp_chunk
-                else:
-                    current_chunk = ""
-            else:
+            # 如果是标题且当前块不为空，先保存当前块再开始新块
+            if is_title and current_chunk:
+                chunks.append(current_chunk)
                 current_chunk = para
+            # 如果当前段落加上现有块不超过限制，则合并
+            elif len(current_chunk) + len(para) + 1 <= chunk_size:
+                if current_chunk:
+                    current_chunk += "\n" + para
+                else:
+                    current_chunk = para
+            else:
+                # 保存当前块
+                if current_chunk:
+                    chunks.append(current_chunk)
+                
+                # 如果单个段落超过chunk_size，需要进一步分割
+                if len(para) > chunk_size:
+                    # 处理长段落
+                    long_para_chunks = split_long_paragraph(para, chunk_size)
+                    chunks.extend(long_para_chunks[:-1])
+                    current_chunk = long_para_chunks[-1]
+                else:
+                    current_chunk = para
+    else:
+        # 无明显结构，按常规方式处理
+        for para in paragraphs:
+            # 如果当前段落加上现有块不超过限制，则合并
+            if len(current_chunk) + len(para) + 1 <= chunk_size:
+                if current_chunk:
+                    current_chunk += "\n" + para
+                else:
+                    current_chunk = para
+            else:
+                # 保存当前块
+                if current_chunk:
+                    chunks.append(current_chunk)
+                
+                # 如果单个段落超过chunk_size，需要进一步分割
+                if len(para) > chunk_size:
+                    # 处理长段落
+                    long_para_chunks = split_long_paragraph(para, chunk_size)
+                    chunks.extend(long_para_chunks[:-1])
+                    current_chunk = long_para_chunks[-1]
+                else:
+                    current_chunk = para
     
     # 添加最后一个块
     if current_chunk:
         chunks.append(current_chunk)
     
     # 应用重叠策略
-    if chunk_overlap > 0 and len(chunks) > 1:
-        overlapped_chunks = []
-        for i, chunk in enumerate(chunks):
-            if i == 0:
-                overlapped_chunks.append(chunk)
+    return apply_overlap(chunks, chunk_overlap)
+
+def split_long_paragraph(paragraph: str, chunk_size: int) -> List[str]:
+    """
+    将长段落按句子分割成多个块
+    
+    Args:
+        paragraph: 长段落文本
+        chunk_size: 每个块的最大字符数
+        
+    Returns:
+        分割后的块列表
+    """
+    # 按句子分割长段落
+    sentences = split_into_sentences(paragraph)
+    chunks = []
+    temp_chunk = ""
+    
+    for sentence in sentences:
+        # 处理超长句子
+        if len(sentence) > chunk_size:
+            # 如果当前临时块不为空，先保存
+            if temp_chunk:
+                chunks.append(temp_chunk)
+                temp_chunk = ""
+            
+            # 将超长句子按字符分割
+            for i in range(0, len(sentence), chunk_size):
+                sub_sentence = sentence[i:i+chunk_size]
+                chunks.append(sub_sentence)
+        else:
+            # 正常句子处理
+            if len(temp_chunk) + len(sentence) + 1 <= chunk_size:
+                if temp_chunk:
+                    temp_chunk += " " + sentence
+                else:
+                    temp_chunk = sentence
             else:
-                # 从前一个块的末尾取overlap字符
-                prev_chunk = chunks[i-1]
-                overlap_text = prev_chunk[-chunk_overlap:] if len(prev_chunk) > chunk_overlap else prev_chunk
-                overlapped_chunk = overlap_text + "\n" + chunk
-                overlapped_chunks.append(overlapped_chunk)
-        return overlapped_chunks
+                if temp_chunk:
+                    chunks.append(temp_chunk)
+                temp_chunk = sentence
+    
+    # 添加最后一个临时块
+    if temp_chunk:
+        chunks.append(temp_chunk)
     
     return chunks
+
+def apply_overlap(chunks: List[str], chunk_overlap: int) -> List[str]:
+    """
+    对分块应用重叠策略
+    
+    Args:
+        chunks: 原始分块列表
+        chunk_overlap: 块之间的重叠字符数
+        
+    Returns:
+        应用重叠后的分块列表
+    """
+    if chunk_overlap <= 0 or len(chunks) <= 1:
+        return chunks
+    
+    overlapped_chunks = []
+    for i, chunk in enumerate(chunks):
+        if i == 0:
+            overlapped_chunks.append(chunk)
+        else:
+            # 从前一个块的末尾取overlap字符
+            prev_chunk = chunks[i-1]
+            overlap_text = prev_chunk[-chunk_overlap:] if len(prev_chunk) > chunk_overlap else prev_chunk
+            overlapped_chunk = overlap_text + "\n" + chunk
+            overlapped_chunks.append(overlapped_chunk)
+    
+    return overlapped_chunks
 
 def run_document_processing(config: dict, work_dir: str, logger):
     input_dir = config["document"]["input_dir"]
@@ -104,27 +204,18 @@ def run_document_processing(config: dict, work_dir: str, logger):
     sim_threshold = config["document"].get("similarity_threshold", 0.80)
     redundancy_threshold = config["document"].get("redundancy_threshold", 0.95)  # ✅ 可配置
     
-    # 从配置中读取分块参数
-    chunk_size = config["document"].get("chunk_size", 1000)
-    chunk_overlap = config["document"].get("chunk_overlap", 200)
+    # 从配置中读取分块参数，默认值调整为更小的chunk_size和更大的overlap
+    chunk_size = config["document"].get("chunk_size", 800)
+    chunk_overlap = config["document"].get("chunk_overlap", 300)
     
+    logger.info(f"使用分块参数: chunk_size={chunk_size}, chunk_overlap={chunk_overlap}")
     llm_client = LLMClient(config)
 
     redundancy_filter = RedundancyBuffer(threshold=redundancy_threshold)
     
-    # 传递配置给TopicPoolManager
-    embedding_config = config.get("embedding", {})
-    model_mapping = {
-        "bge-m3": "BAAI/bge-m3",
-        "text2vec": "shibing624/text2vec-base-chinese",
-        "text-embedding-ada-002": "all-MiniLM-L6-v2",
-        "all-MiniLM-L6-v2": "all-MiniLM-L6-v2"
-    }
-    model_name = embedding_config.get("model_name", "bge-m3")
-    actual_model_name = model_mapping.get(model_name, model_name)
-    
+    # 传递配置给TopicPoolManager，统一使用LLMClient进行嵌入
     topic_manager = TopicPoolManager(
-        model_name=actual_model_name, 
+        model_name=None,  # 不再需要指定模型名称，由LLMClient统一管理
         similarity_threshold=sim_threshold, 
         redundancy_filter=redundancy_filter,
         config=config

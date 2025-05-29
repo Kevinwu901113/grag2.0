@@ -2,18 +2,10 @@ import numpy as np
 from typing import List, Dict
 from document.topic_summary_generator import generate_topic_summary  # 我们新建此工具文件
 from sklearn.metrics.pairwise import cosine_similarity
-from utils.model_cache import model_cache
 from llm.llm import LLMClient
 
-# 条件导入SentenceTransformer，避免在只使用Ollama API时出错
-try:
-    from sentence_transformers import SentenceTransformer
-    SENTENCE_TRANSFORMER_AVAILABLE = True
-except ImportError:
-    SENTENCE_TRANSFORMER_AVAILABLE = False
-
 class TopicPoolManager:
-    def __init__(self, model_name="all-MiniLM-L6-v2", similarity_threshold=0.65, redundancy_filter=None, config=None):
+    def __init__(self, model_name=None, similarity_threshold=0.65, redundancy_filter=None, config=None):
         self.topics: List[Dict] = []
         self.similarity_threshold = similarity_threshold
         self.config = config or {}
@@ -21,37 +13,17 @@ class TopicPoolManager:
         self.max_sentences_per_topic = 100  # 每个主题最大句子数
         self.max_chars_per_topic = 10000    # 每个主题最大字符数
         
-        # 检查是否是BGE-M3模型
-        self.use_ollama = False
-        if model_name == "bge-m3" or model_name == "BAAI/bge-m3":
-            # 如果是BGE-M3模型，使用Ollama API
-            print(f"使用Ollama API调用BGE-M3模型进行嵌入")
-            self.llm_client = LLMClient(self.config)
-            self.use_ollama = True
-            self.model = None
-        else:
-            # 只有在不使用Ollama API时才需要SentenceTransformer
-            if not SENTENCE_TRANSFORMER_AVAILABLE:
-                raise ImportError("SentenceTransformer库未安装，无法使用本地模型。请安装sentence-transformers或使用Ollama API。")
-                
-            # 使用模型缓存获取模型
-            self.model = model_cache.get_sentence_transformer(model_name)
-            if self.model is None:
-                # 如果缓存中没有，则直接创建
-                self.model = SentenceTransformer(model_name)
-            
+        # 统一使用LLMClient进行嵌入向量生成
+        self.llm_client = LLMClient(self.config)
+        
         self.topic_id_counter = 0
         self.redundancy_filter = redundancy_filter  # ✅ 新增
 
     def _get_embedding(self, text: str) -> np.ndarray:
-        if self.use_ollama:
-            # 使用Ollama API进行嵌入
-            embedding = self.llm_client.embed([text])[0]
-            # 确保返回numpy数组
-            return np.array(embedding) if not isinstance(embedding, np.ndarray) else embedding
-        else:
-            # 使用本地SentenceTransformer模型进行嵌入
-            return self.model.encode(text)
+        # 统一使用LLMClient的embed接口
+        embedding = self.llm_client.embed(text)[0]
+        # 确保返回numpy数组
+        return np.array(embedding) if not isinstance(embedding, np.ndarray) else embedding
 
     def add_sentence(self, sentence: str, meta: Dict = None):
         sent_emb = self._get_embedding(sentence)
