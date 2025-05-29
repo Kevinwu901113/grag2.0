@@ -27,16 +27,20 @@ class LLMClient:
     def generate(self, prompt: str) -> str:
         return self.strategy.generate(prompt)
 
-    def embed(self, texts) -> List[List[float]]:
+    def embed(self, texts, normalize_text: bool = True, validate_dim: bool = True) -> List[List[float]]:
         """
         统一的嵌入向量生成接口
         
         Args:
             texts: 文本或文本列表，支持 str 或 List[str]
+            normalize_text: 是否进行文本预处理
+            validate_dim: 是否验证向量维度
             
         Returns:
             嵌入向量列表，格式为 List[List[float]]
         """
+        from utils.common import normalize_text as text_normalizer, validate_embedding_dimension
+        
         # 统一处理输入格式
         if isinstance(texts, str):
             texts = [texts]
@@ -45,6 +49,14 @@ class LLMClient:
             
         if not texts:
             raise ValueError("输入文本列表为空")
+        
+        # 文本预处理
+        if normalize_text:
+            texts = [text_normalizer(text) for text in texts]
+            # 过滤空文本
+            texts = [text for text in texts if text.strip()]
+            if not texts:
+                raise ValueError("预处理后文本列表为空")
         
         try:
             embeddings = self.embed_strategy.embed(texts)
@@ -56,6 +68,13 @@ class LLMClient:
         
         if not isinstance(embeddings[0], list):
             raise ValueError("嵌入返回格式异常，应为二维 list[float]")
+        
+        # 向量维度验证
+        if validate_dim:
+            expected_dim = len(embeddings[0]) if embeddings else None
+            for i, embedding in enumerate(embeddings):
+                if not validate_embedding_dimension(embedding, expected_dim):
+                    raise ValueError(f"第{i}个嵌入向量维度验证失败，期望维度: {expected_dim}，实际维度: {len(embedding) if embedding else 0}")
         
         print(f"[LLMClient.embed] 成功嵌入 {len(embeddings)} 条文本，每条维度 {len(embeddings[0])}")
         return embeddings

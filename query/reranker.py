@@ -43,8 +43,8 @@ class SimpleReranker:
         # 综合评分
         final_scores = []
         for i, candidate in enumerate(candidates):
-            # 原始相似度权重
-            vector_score = candidate.get('similarity', 0.0)
+            # 优先使用归一化后的相似度，否则使用原始相似度
+            vector_score = candidate.get('normalized_similarity', candidate.get('similarity', 0.0))
             
             # TF-IDF权重
             tfidf_score = tfidf_scores[i] if i < len(tfidf_scores) else 0.0
@@ -102,29 +102,26 @@ class SimpleReranker:
             return [0.0] * len(candidate_texts)
     
     def _calculate_keyword_overlap(self, query: str, candidate_texts: List[str]) -> List[float]:
-        """计算关键词重叠度"""
-        # 使用jieba分词
-        query_words = set(jieba.cut(query))
-        # 去除停用词
-        stop_words = {'的', '了', '在', '是', '我', '有', '和', '就', '不', '人', '都', '一', '一个', '上', '也', '很', '到', '说', '要', '去', '你', '会', '着', '没有', '看', '好', '自己', '这'}
-        query_words = query_words - stop_words
-        
-        if not query_words:
-            return [0.0] * len(candidate_texts)
+        """
+        计算关键词重叠度
+        """
+        # 使用改进的分词函数
+        from utils.common import improved_tokenize
+        query_words = set(improved_tokenize(query))
         
         overlap_scores = []
         for text in candidate_texts:
-            text_words = set(jieba.cut(text)) - stop_words
-            if not text_words:
-                overlap_scores.append(0.0)
-                continue
+            text_words = set(improved_tokenize(text))
             
             # 计算Jaccard相似度
             intersection = len(query_words & text_words)
             union = len(query_words | text_words)
-            jaccard_score = intersection / union if union > 0 else 0.0
-            overlap_scores.append(jaccard_score)
-        
+            
+            if union == 0:
+                overlap_scores.append(0.0)
+            else:
+                overlap_scores.append(intersection / union)
+                
         return overlap_scores
     
     def _calculate_diversity_scores(self, candidate_texts: List[str]) -> List[float]:

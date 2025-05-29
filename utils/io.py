@@ -159,12 +159,47 @@ def save_graph(graph: nx.Graph, work_dir: str):
         graph_path = os.path.join(work_dir, "graph.json")
         save_json(graph_json, graph_path)
         
-        # 可选保存GraphML格式供可视化
+        # 保存GraphML格式供可视化（需要清理不支持的数据类型）
         graphml_path = os.path.join(work_dir, "graph.graphml")
-        nx.write_graphml(graph, graphml_path)
+        _save_graphml_safe(graph, graphml_path)
     except Exception as e:
         print(f"❌ 保存图谱失败: {e}")
         raise
+
+
+def _save_graphml_safe(graph: nx.Graph, graphml_path: str):
+    """
+    安全保存GraphML格式，清理不支持的数据类型
+    
+    Args:
+        graph: NetworkX图对象
+        graphml_path: GraphML文件路径
+    """
+    # 创建图的副本以避免修改原图
+    graph_copy = graph.copy()
+    
+    # 清理节点属性中的不支持类型
+    for node, data in graph_copy.nodes(data=True):
+        for key, value in list(data.items()):
+            if isinstance(value, (list, dict, type)):
+                # 将list转换为字符串，删除dict和type类型
+                if isinstance(value, list):
+                    data[key] = str(value)
+                else:
+                    del data[key]
+    
+    # 清理边属性中的不支持类型
+    for u, v, data in graph_copy.edges(data=True):
+        for key, value in list(data.items()):
+            if isinstance(value, (list, dict, type)):
+                # 将list转换为字符串，删除dict和type类型
+                if isinstance(value, list):
+                    data[key] = str(value)
+                else:
+                    del data[key]
+    
+    # 保存清理后的图
+    nx.write_graphml(graph_copy, graphml_path)
 
 
 def ensure_dir_exists(dir_path: str):
@@ -188,3 +223,52 @@ def file_exists(file_path: str) -> bool:
         文件是否存在
     """
     return os.path.exists(file_path) and os.path.isfile(file_path)
+
+
+def load_entity_vector_index(work_dir: str) -> Tuple[Optional[Any], Dict[str, Any], Dict[str, Any]]:
+    """
+    加载实体向量索引
+    
+    Args:
+        work_dir: 工作目录
+        
+    Returns:
+        (faiss索引对象, 实体ID映射字典, 实体元数据字典)
+    """
+    try:
+        index_path = os.path.join(work_dir, "entity_vector.index")
+        mapping_path = os.path.join(work_dir, "entity_embedding_map.json")
+        metadata_path = os.path.join(work_dir, "entity_metadata.json")
+        
+        index = faiss.read_index(index_path)
+        id_map = load_json(mapping_path, default={})
+        metadata = load_json(metadata_path, default={})
+        
+        return index, id_map, metadata
+    except (FileNotFoundError, IOError) as e:
+        print(f"❌ 加载实体向量索引失败: {e}")
+        return None, {}, {}
+
+
+def save_entity_vector_index(index: Any, id_map: Dict[str, Any], metadata: Dict[str, Any], work_dir: str):
+    """
+    保存实体向量索引
+    
+    Args:
+        index: faiss索引对象
+        id_map: 实体ID映射字典
+        metadata: 实体元数据字典
+        work_dir: 工作目录
+    """
+    try:
+        os.makedirs(work_dir, exist_ok=True)
+        index_path = os.path.join(work_dir, "entity_vector.index")
+        mapping_path = os.path.join(work_dir, "entity_embedding_map.json")
+        metadata_path = os.path.join(work_dir, "entity_metadata.json")
+        
+        faiss.write_index(index, index_path)
+        save_json(id_map, mapping_path)
+        save_json(metadata, metadata_path)
+    except (IOError, OSError) as e:
+        print(f"❌ 保存实体向量索引失败: {e}")
+        raise

@@ -52,11 +52,32 @@ def run_vector_indexer(config: dict, work_dir: str, logger=None):
     try:
         for i in range(0, len(texts), batch_size):
             batch_texts = texts[i:i+batch_size]
-            batch_embeddings = llm.embed(batch_texts)
+            # 启用文本预处理和维度验证
+            batch_embeddings = llm.embed(batch_texts, normalize_text=True, validate_dim=True)
+            
+            # 验证批次嵌入
+            if not batch_embeddings:
+                logger.warning(f"批次 {i//batch_size + 1} 嵌入生成失败，跳过")
+                pbar.update(len(batch_texts))
+                continue
+                
+            # 检查嵌入维度一致性
+            if all_embeddings and len(batch_embeddings[0]) != len(all_embeddings[0]):
+                logger.error(f"批次 {i//batch_size + 1} 嵌入维度不一致: 期望 {len(all_embeddings[0])}, 实际 {len(batch_embeddings[0])}")
+                pbar.close()
+                return
+                
             all_embeddings.extend(batch_embeddings)
             pbar.update(len(batch_texts))
-    except (ValueError, ConnectionError, TimeoutError) as e:
+            
+    except (ValueError, ConnectionError, TimeoutError, RuntimeError) as e:
         logger.error(f"生成嵌入时出错: {e}")
+        pbar.close()
+        return
+    except Exception as e:
+        logger.error(f"生成嵌入时发生未知错误: {e}")
+        import traceback
+        logger.error(f"详细错误信息: {traceback.format_exc()}")
         pbar.close()
         return
     
@@ -67,7 +88,28 @@ def run_vector_indexer(config: dict, work_dir: str, logger=None):
         return
         
     dim = len(all_embeddings[0])
+    logger.info(f"嵌入维度: {dim}, 有效嵌入数量: {len(all_embeddings)}")
+    
+    # 验证所有嵌入向量
+    from utils.common import validate_embedding_dimension
+    invalid_count = 0
+    for i, embedding in enumerate(all_embeddings):
+        if not validate_embedding_dimension(embedding, dim):
+            logger.warning(f"第 {i} 个嵌入向量无效")
+            invalid_count += 1
+    
+    if invalid_count > 0:
+        logger.warning(f"发现 {invalid_count} 个无效嵌入向量")
+        if invalid_count > len(all_embeddings) * 0.1:  # 如果超过10%的向量无效
+            logger.error("无效嵌入向量过多，停止构建索引")
+            return
+    
     embeddings_np = np.array(all_embeddings).astype('float32')
+    
+    # 检查数组中的无效值
+    if np.any(np.isnan(embeddings_np)) or np.any(np.isinf(embeddings_np)):
+        logger.error("嵌入数组包含NaN或无穷大值，无法构建索引")
+        return
 
     vec_config = config.get("vector", {})
     index_type = vec_config.get("index_type", "Flat").upper()

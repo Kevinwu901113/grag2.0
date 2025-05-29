@@ -10,6 +10,7 @@ from utils.misc import init_logger
 from document.document_processor import run_document_processing
 from graph.graph_builder import run_graph_construction
 from vector.optimized_vector_indexer import run_vector_indexer
+from vector.entity_vector_indexer import run_entity_vector_indexer
 from query.query_handler import run_query_loop
 
 # 轻量级分类器模块（无需训练）
@@ -24,7 +25,7 @@ def load_config(config_path="config.yaml"):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--debug", type=str, default=None, help="只运行指定模块，如: doc, graph, vector, classifier, query")
+    parser.add_argument("--debug", type=str, default=None, help="只运行指定模块，如: doc, graph, vector, entity_vector, classifier, query")
     parser.add_argument("--new", action="store_true", help="创建新的运行目录")
     parser.add_argument("--work_dir", type=str, help="指定已有运行目录")
     args = parser.parse_args()
@@ -43,6 +44,9 @@ def main():
     elif args.debug == "vector":
         run_vector_indexer(config, work_dir, logger)
         return
+    elif args.debug == "entity_vector":
+        run_entity_vector_indexer(config, work_dir, logger=logger)
+        return
     elif args.debug == "classifier":
         # 轻量级分类器无需训练，直接跳过
         logger.info("轻量级分类器无需训练，跳过分类器模块")
@@ -57,6 +61,7 @@ def main():
     
     run_graph_construction(config, work_dir, logger)
     run_vector_indexer(config, work_dir, logger)
+    run_entity_vector_indexer(config, work_dir, logger=logger)
     run_query_loop(config, work_dir, logger)
 
 if __name__ == "__main__":

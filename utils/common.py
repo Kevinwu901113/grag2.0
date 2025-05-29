@@ -26,6 +26,123 @@ def chunk_iterator(chunks: List[Dict[str, Any]], batch_size: int = 100):
         yield chunks[i:i + batch_size]
 
 
+def normalize_text(text: str) -> str:
+    """
+    文本归一化预处理，改进中英文混合处理
+    
+    Args:
+        text: 输入文本
+        
+    Returns:
+        归一化后的文本
+    """
+    if not text:
+        return ""
+    
+    # 去除首尾空白
+    text = text.strip()
+    
+    # 中英文之间添加空格（如果没有的话）
+    text = re.sub(r'([\u4e00-\u9fff])([a-zA-Z])', r'\1 \2', text)
+    text = re.sub(r'([a-zA-Z])([\u4e00-\u9fff])', r'\1 \2', text)
+    
+    # 统一空格（将多个连续空格替换为单个空格）
+    text = re.sub(r'\s+', ' ', text)
+    
+    # 去除特殊控制字符
+    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', text)
+    
+    return text
+
+
+def validate_embedding_dimension(embedding: List[float], expected_dim: int = None) -> bool:
+    """
+    验证嵌入向量维度
+    
+    Args:
+        embedding: 嵌入向量
+        expected_dim: 期望的维度，如果为None则不检查
+        
+    Returns:
+        是否通过验证
+    """
+    if not embedding or not isinstance(embedding, list):
+        return False
+    
+    if expected_dim is not None and len(embedding) != expected_dim:
+        return False
+    
+    # 检查是否包含有效的浮点数
+    try:
+        for val in embedding:
+            if not isinstance(val, (int, float)) or not (-1e10 < val < 1e10):
+                return False
+    except (TypeError, ValueError):
+        return False
+    
+    return True
+
+
+def normalize_scores(candidates: List[Dict[str, Any]], score_key: str = 'similarity', method: str = 'minmax') -> List[Dict[str, Any]]:
+    """
+    统一归一化不同检索方法的得分
+    
+    Args:
+        candidates: 候选结果列表
+        score_key: 得分字段名
+        method: 归一化方法，支持 'minmax', 'zscore'
+        
+    Returns:
+        归一化后的候选结果列表
+    """
+    if not candidates:
+        return candidates
+    
+    scores = [c.get(score_key, 0.0) for c in candidates]
+    
+    if method == 'minmax':
+        min_score, max_score = min(scores), max(scores)
+        if max_score > min_score:
+            for i, c in enumerate(candidates):
+                c['normalized_similarity'] = (scores[i] - min_score) / (max_score - min_score)
+        else:
+            for c in candidates:
+                c['normalized_similarity'] = 1.0
+    elif method == 'zscore':
+        import numpy as np
+        mean_score = np.mean(scores)
+        std_score = np.std(scores)
+        if std_score > 0:
+            for i, c in enumerate(candidates):
+                c['normalized_similarity'] = (scores[i] - mean_score) / std_score
+        else:
+            for c in candidates:
+                c['normalized_similarity'] = 0.0
+    
+    return candidates
+
+
+def improved_tokenize(text: str) -> List[str]:
+    """
+    改进的分词函数，更好处理中英文混合
+    
+    Args:
+        text: 输入文本
+        
+    Returns:
+        分词结果列表
+    """
+    # 先进行文本归一化
+    text = normalize_text(text.lower())
+    
+    # 使用jieba分词
+    tokens = jieba.lcut(text)
+    
+    # 过滤停用词和单字符
+    stop_words = {'的', '了', '在', '是', '我', '有', '和', '就', '不', '人', '都', '一', '一个', '上', '也', '很', '到', '说', '要', '去', '你', '会', '着', '没有', '看', '好', '自己', '这'}
+    return [token for token in tokens if len(token) > 1 and token not in stop_words]
+
+
 def extract_keywords(text: str, top_k: int = 10) -> List[str]:
     """
     从文本中提取关键词
@@ -37,13 +154,12 @@ def extract_keywords(text: str, top_k: int = 10) -> List[str]:
     Returns:
         关键词列表
     """
-    # 简单的关键词提取，基于词频
-    words = jieba.lcut(text)
+    # 使用改进的分词函数
+    words = improved_tokenize(text)
     word_freq = defaultdict(int)
     
     for word in words:
-        if len(word) > 1 and word.isalnum():  # 过滤单字符和非字母数字
-            word_freq[word] += 1
+        word_freq[word] += 1
     
     # 按频率排序并返回前k个
     sorted_words = sorted(word_freq.items(), key=lambda x: x[1], reverse=True)

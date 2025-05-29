@@ -30,13 +30,33 @@ def direct_vector_search(query: str, index, id_map: dict, chunks: list, config: 
         # 统一使用LLMClient进行嵌入向量生成
         llm_client = LLMClient(config)
         
-        # 编码查询
-        query_emb = llm_client.embed(query)
-        query_emb = np.array(query_emb).astype('float32')
+        # 编码查询（启用文本预处理和维度验证）
+        query_embeddings = llm_client.embed([query], normalize_text=True, validate_dim=True)
+        if not query_embeddings:
+            print(f"查询向量生成失败: {query}")
+            return []
+            
+        query_emb = np.array([query_embeddings[0]]).astype('float32')
+        
+        # 检查向量有效性
+        if query_emb.shape[1] == 0:
+            print(f"查询向量为空: {query}")
+            return []
+            
+        # 检查查询向量幅度（异常检测）
+        vector_magnitude = np.linalg.norm(query_emb)
+        if vector_magnitude < 1e-6:
+            print(f"⚠️ 查询向量幅度过小: {vector_magnitude}, 可能存在异常")
+            return []
         
         # 归一化查询向量以确保计算余弦相似度
         import faiss
         faiss.normalize_L2(query_emb)
+        
+        # 检查归一化后的向量
+        if np.any(np.isnan(query_emb)) or np.any(np.isinf(query_emb)):
+            print(f"查询向量包含无效值: {query}")
+            return []
         
         # 搜索最相似的向量
         scores, indices = index.search(query_emb, top_k)

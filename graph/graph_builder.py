@@ -5,130 +5,127 @@ import networkx as nx
 from llm.llm import LLMClient
 from networkx.readwrite import json_graph
 from utils.io import load_json, save_graph
+from graph.entity_extractor import EntityExtractor, extract_relations_with_llm
 
-def extract_entities_and_relations(text: str, llm_client: LLMClient):
+def extract_entities_and_relations(text: str, llm_client: LLMClient, entity_extractor: EntityExtractor = None):
     """
-    调用 LLM 抽取实体与三元组，返回列表
+    使用改进的实体抽取器和LLM抽取实体与关系
+    
+    Args:
+        text: 输入文本
+        llm_client: LLM客户端
+        entity_extractor: 实体抽取器实例
+        
+    Returns:
+        关系三元组列表 (头实体, 关系, 尾实体)
     """
-    prompt = f"""
-请从以下段落中抽取所有实体及它们之间的关系，严格按照以下格式输出，每行一个：
-
-格式：实体A -[关系]-> 实体B
-
-格式说明：
-1. 实体A和实体B是文本中提到的人物、组织、地点、概念等
-2. 关系是连接两个实体的动词或描述词
-3. 必须使用 -[关系]-> 这种精确格式，包括方括号和箭头
-4. 每个三元组占一行，不要有多余文字
-
-要求：
-1. 不要输出任何解释说明文字
-2. 每行必须严格遵循上述格式
-3. 如果找不到关系，直接跳过，不要输出不完整的行
-4. 确保实体和关系都有实际内容，不要输出空实体或空关系
-
-正确示例：
-马云 -[创立]-> 阿里巴巴
-张勇 -[担任]-> 首席执行官
-中国 -[包含]-> 北京
-学生 -[参加]-> 考试
-
-错误示例（请勿这样输出）：
-马云创立了阿里巴巴  （错误：没有使用规定格式）
-马云 - 创立 -> 阿里巴巴  （错误：关系没有用方括号括起来）
-马云-[创立]->阿里巴巴  （错误：缺少空格）
--[位于]->北京  （错误：缺少实体A）
-
-正文如下：
-{text}
-
-请开始输出实体关系三元组（严格按照格式）：
-""".strip()
-
+    if entity_extractor is None:
+        entity_extractor = EntityExtractor()
+    
     try:
-        response = llm_client.generate(prompt)
-        lines = response.strip().splitlines()
-        triples = []
-
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue  # 跳过空行
-                
-            # 尝试修复常见的格式问题
-            # 1. 修复缺少空格的情况
-            line = re.sub(r'(\S)-\[', r'\1 -[', line)
-            line = re.sub(r'\]-(\S)', r']-> \1', line)
-            
-            # 2. 修复箭头格式问题
-            if "-[" in line and not "->" in line:
-                line = line.replace("]", "]->")
-            
-            # 3. 修复缺少方括号的情况
-            if "->" in line and not "-[" in line and "-" in line:
-                parts = line.split("-")
-                if len(parts) >= 2 and "->" in parts[1]:
-                    relation = parts[1].split("->")[0].strip()
-                    line = f"{parts[0].strip()} -[{relation}]-> {parts[1].split('->', 1)[1].strip()}"
-            
-            # 跳过仍然无效的行
-            if not line or "-[" not in line or "->" not in line:
-                continue
-                
-            # 使用更灵活的正则表达式匹配
-            match = re.match(r"(.+?)\s*-\[(.+?)\]->\s*(.+)", line)
-            if match:
-                h, r, t = match.group(1).strip(), match.group(2).strip(), match.group(3).strip()
-                # 过滤空关系或空实体
-                if h and r and t:
-                    triples.append((h, r, t))
-                else:
-                    print(f"[⚠️ 跳过空值实体或关系]: {line}")
-            else:
-                # 尝试更宽松的匹配
-                alt_match = re.search(r"([^-\[\]]+)\s*-\s*\[?([^\[\]]+)\]?\s*-?>?\s*([^-\[\]]+)", line)
-                if alt_match:
-                    h, r, t = alt_match.group(1).strip(), alt_match.group(2).strip(), alt_match.group(3).strip()
-                    if h and r and t:
-                        print(f"[ℹ️ 修复格式]: {line} -> {h} -[{r}]-> {t}")
-                        triples.append((h, r, t))
-                    else:
-                        print(f"[⚠️ 跳过空值实体或关系]: {line}")
-                else:
-                    print(f"[⚠️ 跳过格式异常]: {line}")
-
+        # 1. 使用改进的实体抽取器识别实体
+        entities_info = entity_extractor.extract_entities(text)
+        entities = [entity['text'] for entity in entities_info]
+        
+        if len(entities) < 2:
+            print(f"[⚠️ 实体数量不足]: 仅识别到 {len(entities)} 个实体")
+            return []
+        
+        print(f"[✅ 实体识别]: 识别到 {len(entities)} 个实体: {entities[:10]}{'...' if len(entities) > 10 else ''}")
+        
+        # 2. 使用LLM抽取实体间的关系
+        triples = extract_relations_with_llm(text, entities, llm_client)
+        
+        print(f"[✅ 关系抽取]: 抽取到 {len(triples)} 个关系三元组")
+        
         return triples
-    except (ValueError, json.JSONDecodeError, KeyError) as e:
-        print(f"❌ 抽取失败: {e}")
+        
+    except Exception as e:
+        print(f"❌ 实体关系抽取失败: {e}")
         return []
 
 
-def build_graph(chunks: list[dict], llm_client: LLMClient):
+def build_graph(chunks: list[dict], llm_client: LLMClient, config: dict = None):
+    """
+    构建知识图谱
+    
+    Args:
+        chunks: 文档块列表
+        llm_client: LLM客户端
+        config: 配置信息
+        
+    Returns:
+        构建的知识图谱
+    """
     G = nx.DiGraph()
-
-    for chunk in chunks:
+    
+    # 初始化实体抽取器
+    entity_config = config.get("entity_extraction", {}) if config else {}
+    entity_extractor = EntityExtractor(entity_config)
+    
+    # 统计信息
+    total_entities = set()
+    total_relations = 0
+    
+    for i, chunk in enumerate(chunks):
         text = chunk["text"]
-        summary = chunk.get("summary", chunk["id"])
-        topic_node_id = f"topic::{summary}"
+        chunk_id = chunk["id"]
+        summary = chunk.get("summary", chunk_id)
+        topic_node_id = f"topic::{chunk_id}"
 
-        # 创建主题节点
-        G.add_node(topic_node_id, type="topic", label=summary)
+        # 创建主题节点，添加更多属性
+        G.add_node(topic_node_id, 
+                  type="topic", 
+                  label=summary,
+                  chunk_id=chunk_id,
+                  text_length=len(text))
 
         # 抽取实体三元组
-        triples = extract_entities_and_relations(text, llm_client)
+        triples = extract_entities_and_relations(text, llm_client, entity_extractor)
+        
+        if not triples:
+            print(f"[⚠️ 块 {i+1}/{len(chunks)}]: 未抽取到有效关系")
+            continue
+            
+        print(f"[📊 块 {i+1}/{len(chunks)}]: 抽取到 {len(triples)} 个关系")
+        total_relations += len(triples)
 
+        # 记录当前块的实体
+        chunk_entities = set()
+        
         for head, relation, tail in triples:
-            # 添加实体节点
-            G.add_node(head, type="entity")
-            G.add_node(tail, type="entity")
+            # 添加实体节点（如果不存在）
+            if not G.has_node(head):
+                G.add_node(head, type="entity", label=head)
+            if not G.has_node(tail):
+                G.add_node(tail, type="entity", label=tail)
+            
+            # 记录实体
+            chunk_entities.add(head)
+            chunk_entities.add(tail)
+            total_entities.add(head)
+            total_entities.add(tail)
 
-            # 添加三元组边
-            G.add_edge(head, tail, relation=relation)
+            # 添加实体间的关系边
+            if G.has_edge(head, tail):
+                # 如果边已存在，更新关系信息
+                existing_relations = G[head][tail].get('relations', [])
+                if relation not in existing_relations:
+                    existing_relations.append(relation)
+                    G[head][tail]['relations'] = existing_relations
+            else:
+                G.add_edge(head, tail, relation=relation, relations=[relation])
 
-            # 把实体连接回主题
-            G.add_edge(topic_node_id, head, relation="包含")
-            G.add_edge(topic_node_id, tail, relation="包含")
-
+            # 连接实体到主题节点
+            if not G.has_edge(topic_node_id, head):
+                G.add_edge(topic_node_id, head, relation="包含")
+            if not G.has_edge(topic_node_id, tail):
+                G.add_edge(topic_node_id, tail, relation="包含")
+        
+        # 为主题节点添加实体计数信息
+        G.nodes[topic_node_id]['entity_count'] = len(chunk_entities)
+    
+    print(f"[🎯 图构建完成]: 总实体数 {len(total_entities)}, 总关系数 {total_relations}")
     return G
 
 # save_graph函数已移至utils.io模块
