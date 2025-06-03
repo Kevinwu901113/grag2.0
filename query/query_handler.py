@@ -5,6 +5,7 @@ import numpy as np
 from query.optimized_theme_matcher import ThemeMatcher
 from query.reranker import SimpleReranker, LLMReranker
 from query.enhanced_retriever import EnhancedRetriever
+from query.query_rewriter import QueryRewriter, is_query_rewrite_enabled
 from llm.llm import LLMClient
 from llm.answer_selector import AnswerSelector
 from graph.graph_utils import extract_entity_names, match_entities_in_query, extract_subgraph, summarize_subgraph
@@ -115,6 +116,29 @@ def handle_query(query: str, config: dict, work_dir: str, mode: str = "auto", pr
     """
     import time
     start_time = time.time()
+    
+    # 查询改写处理
+    original_query = query
+    rewrite_result = None
+    
+    if is_query_rewrite_enabled(config):
+        try:
+            rewriter = QueryRewriter(config)
+            rewrite_result = rewriter.rewrite_query(query)
+            
+            # 根据评估结果决定是否使用改写后的查询
+            if (rewrite_result.get("evaluation", {}).get("recommendation") == "accept" or 
+                not rewrite_result.get("evaluation")):
+                query = rewrite_result["rewritten_query"]
+                print(f"[查询改写] 原始查询: {original_query}")
+                print(f"[查询改写] 改写查询: {query}")
+                print(f"[查询改写] 策略: {rewrite_result['strategy']}")
+            else:
+                print(f"[查询改写] 改写被拒绝，使用原始查询")
+                query = original_query
+        except Exception as e:
+            print(f"⚠️ 查询改写失败，使用原始查询: {e}")
+            query = original_query
     
     llm = LLMClient(config)
     chunks = load_chunks(work_dir)
@@ -227,7 +251,13 @@ def handle_query(query: str, config: dict, work_dir: str, mode: str = "auto", pr
         'sources': candidates,
         'processing_time': time.time() - start_time,
         'enhanced_retrieval': use_enhanced_retrieval,
-        'answer_selection': selection_metadata
+        'answer_selection': selection_metadata,
+        'query_rewrite': {
+            'enabled': is_query_rewrite_enabled(config),
+            'original_query': original_query,
+            'final_query': query,
+            'rewrite_result': rewrite_result
+        }
     }
 
 def run_query_loop(config: dict, work_dir: str, logger=None):

@@ -1,8 +1,9 @@
 import numpy as np
-from typing import List, Dict
-from document.topic_summary_generator import generate_topic_summary  # 我们新建此工具文件
+from typing import List, Dict, Optional
 from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.cluster import KMeans
 from llm.llm import LLMClient
+from document.topic_summary_generator import generate_topic_summary
 
 class TopicPoolManager:
     def __init__(self, model_name=None, similarity_threshold=0.65, redundancy_filter=None, config=None):
@@ -18,6 +19,10 @@ class TopicPoolManager:
         
         self.topic_id_counter = 0
         self.redundancy_filter = redundancy_filter  # ✅ 新增
+        
+        # 新增：内聚度评估参数
+        self.coherence_threshold = config.get("advanced_clustering", {}).get("coherence_threshold", 0.6)
+        self.min_cluster_size = config.get("advanced_clustering", {}).get("min_cluster_size", 3)
 
     def _get_embedding(self, text: str) -> np.ndarray:
         # 统一使用LLMClient的embed接口
@@ -100,7 +105,7 @@ class TopicPoolManager:
         self._check_and_split_topic(idx)
 
     def _check_and_split_topic(self, idx: int):
-        """检查主题是否需要分裂，如果句子数超过阈值则分裂"""
+        """检查主题是否需要分裂，使用智能分裂策略而非简单均匀分裂"""
         topic = self.topics[idx]
         
         # 如果句子数超过80%的限制，考虑分裂
@@ -108,33 +113,141 @@ class TopicPoolManager:
             sentences = topic["sentences"]
             metas = topic["meta"]
             
-            # 将句子分成两组
-            mid_point = len(sentences) // 2
+            # 计算当前主题的内聚度
+            embeddings = [self._get_embedding(s) for s in sentences]
+            embeddings_array = np.array(embeddings)
+            coherence_score = self._calculate_topic_coherence(embeddings_array)
             
-            # 更新原主题
-            topic["sentences"] = sentences[:mid_point]
-            topic["meta"] = metas[:mid_point]
+            # 如果内聚度较低，使用智能分裂策略
+            if coherence_score < self.coherence_threshold and len(sentences) >= 4:
+                split_result = self._intelligent_split_topic(sentences, metas, embeddings_array)
+                if split_result:
+                    # 更新原主题
+                    topic["sentences"] = split_result[0]["sentences"]
+                    topic["meta"] = split_result[0]["meta"]
+                    topic["center"] = split_result[0]["center"]
+                    topic["coherence_score"] = split_result[0]["coherence_score"]
+                    
+                    # 添加新主题
+                    new_topic = split_result[1]
+                    new_topic["id"] = f"topic_{self.topic_id_counter}"
+                    self.topics.append(new_topic)
+                    self.topic_id_counter += 1
+                    return
             
-            # 重新计算原主题的中心
-            if topic["sentences"]:
-                embeddings = [self._get_embedding(s) for s in topic["sentences"]]
-                topic["center"] = np.mean(embeddings, axis=0)
+            # 如果智能分裂失败或不适用，使用传统的中点分裂
+            self._simple_split_topic(topic, sentences, metas, embeddings)
+    
+    def _intelligent_split_topic(self, sentences: List[str], metas: List[Dict], embeddings: np.ndarray) -> Optional[List[Dict]]:
+        """
+        基于二聚类的智能主题分裂策略
+        
+        Args:
+            sentences: 句子列表
+            metas: 元数据列表
+            embeddings: 嵌入向量数组
             
-            # 创建新主题
-            if len(sentences) > mid_point:
-                new_sentences = sentences[mid_point:]
-                new_metas = metas[mid_point:]
-                new_embeddings = [self._get_embedding(s) for s in new_sentences]
-                new_center = np.mean(new_embeddings, axis=0)
+        Returns:
+            分裂后的两个主题数据，如果分裂失败返回None
+        """
+        try:
+            # 使用K-means进行二聚类
+            kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
+            split_labels = kmeans.fit_predict(embeddings)
+            
+            # 按聚类标签分组
+            group_0_indices = np.where(split_labels == 0)[0]
+            group_1_indices = np.where(split_labels == 1)[0]
+            
+            # 确保两个组都有足够的句子
+            if len(group_0_indices) < self.min_cluster_size or len(group_1_indices) < self.min_cluster_size:
+                return None
+            
+            # 创建两个分裂后的主题数据
+            split_topics = []
+            for indices in [group_0_indices, group_1_indices]:
+                sub_sentences = [sentences[idx] for idx in indices]
+                sub_metas = [metas[idx] for idx in indices]
+                sub_embeddings = embeddings[indices]
                 
-                new_topic = {
-                    "id": f"topic_{self.topic_id_counter}",
-                    "sentences": new_sentences,
-                    "meta": new_metas,
-                    "center": new_center
-                }
-                self.topics.append(new_topic)
-                self.topic_id_counter += 1
+                # 计算新的中心向量和内聚度
+                sub_center = np.mean(sub_embeddings, axis=0)
+                sub_coherence = self._calculate_topic_coherence(sub_embeddings)
+                
+                split_topics.append({
+                    "sentences": sub_sentences,
+                    "meta": sub_metas,
+                    "center": sub_center,
+                    "coherence_score": sub_coherence
+                })
+            
+            return split_topics
+            
+        except Exception:
+            return None
+    
+    def _simple_split_topic(self, topic: Dict, sentences: List[str], metas: List[Dict], embeddings: List[np.ndarray]):
+        """
+        传统的简单中点分裂策略（作为备选方案）
+        
+        Args:
+            topic: 原主题
+            sentences: 句子列表
+            metas: 元数据列表
+            embeddings: 嵌入向量列表
+        """
+        # 将句子分成两组
+        mid_point = len(sentences) // 2
+        
+        # 更新原主题
+        topic["sentences"] = sentences[:mid_point]
+        topic["meta"] = metas[:mid_point]
+        
+        # 重新计算原主题的中心
+        if topic["sentences"]:
+            topic_embeddings = embeddings[:mid_point]
+            topic["center"] = np.mean(topic_embeddings, axis=0)
+            topic["coherence_score"] = self._calculate_topic_coherence(np.array(topic_embeddings))
+        
+        # 创建新主题
+        if len(sentences) > mid_point:
+            new_sentences = sentences[mid_point:]
+            new_metas = metas[mid_point:]
+            new_embeddings = embeddings[mid_point:]
+            new_center = np.mean(new_embeddings, axis=0)
+            new_coherence = self._calculate_topic_coherence(np.array(new_embeddings))
+            
+            new_topic = {
+                "id": f"topic_{self.topic_id_counter}",
+                "sentences": new_sentences,
+                "meta": new_metas,
+                "center": new_center,
+                "coherence_score": new_coherence
+            }
+            self.topics.append(new_topic)
+            self.topic_id_counter += 1
+    
+    def _calculate_topic_coherence(self, embeddings: np.ndarray) -> float:
+        """
+        计算主题内各句间平均相似度作为内聚度指标
+        
+        Args:
+            embeddings: 主题内句子的嵌入向量矩阵
+            
+        Returns:
+            主题内聚度分数 (0-1之间)
+        """
+        if len(embeddings) < 2:
+            return 1.0
+        
+        # 计算所有句子对之间的余弦相似度
+        similarity_matrix = cosine_similarity(embeddings)
+        
+        # 排除对角线元素（自相似度），计算平均相似度
+        mask = ~np.eye(similarity_matrix.shape[0], dtype=bool)
+        similarities = similarity_matrix[mask]
+        
+        return float(np.mean(similarities))
 
     def get_all_topics(self, llm_client=None) -> List[Dict]:
         result = []

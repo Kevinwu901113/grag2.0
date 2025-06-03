@@ -331,8 +331,12 @@ class EnhancedRetriever:
             return []
             
         try:
-            # 匹配查询中的实体
-            matched_entities = match_entities_in_query(query, self.entity_names)
+            # 匹配查询中的实体（使用改进的匹配算法和配置）
+            matched_entities = match_entities_in_query(
+                query, 
+                self.entity_names,
+                use_cache=True  # 启用缓存以提高性能
+            )
             
             if not matched_entities:
                 return []

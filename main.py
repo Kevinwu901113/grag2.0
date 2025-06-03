@@ -8,6 +8,7 @@ from utils.misc import init_logger
 
 # 主流程模块
 from document.document_processor import run_document_processing
+from document.enhanced_document_processor import run_enhanced_document_processing
 from graph.graph_builder import run_graph_construction
 from vector.optimized_vector_indexer import run_vector_indexer
 from vector.entity_vector_indexer import run_entity_vector_indexer
@@ -25,9 +26,10 @@ def load_config(config_path="config.yaml"):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--debug", type=str, default=None, help="只运行指定模块，如: doc, graph, vector, entity_vector, classifier, query")
+    parser.add_argument("--debug", type=str, default=None, help="只运行指定模块，如: doc, enhanced_doc, graph, vector, entity_vector, classifier, query")
     parser.add_argument("--new", action="store_true", help="创建新的运行目录")
     parser.add_argument("--work_dir", type=str, help="指定已有运行目录")
+    parser.add_argument("--use_advanced_clustering", action="store_true", help="使用高级聚类算法进行文档处理")
     args = parser.parse_args()
 
     config = load_config()
@@ -37,6 +39,9 @@ def main():
 
     if args.debug == "doc":
         run_document_processing(config, work_dir, logger)
+        return
+    elif args.debug == "enhanced_doc":
+        run_enhanced_document_processing(config, work_dir, logger)
         return
     elif args.debug == "graph":
         run_graph_construction(config, work_dir, logger)
@@ -56,7 +61,16 @@ def main():
         return
 
     # 默认完整流程（跳过分类器训练）
-    run_document_processing(config, work_dir, logger)
+    # 根据参数或配置选择文档处理方式
+    use_advanced = args.use_advanced_clustering or config.get("document", {}).get("processing_mode") == "advanced"
+    
+    if use_advanced:
+        logger.info("使用高级聚类算法进行文档处理")
+        run_enhanced_document_processing(config, work_dir, logger)
+    else:
+        logger.info("使用传统方法进行文档处理")
+        run_document_processing(config, work_dir, logger)
+    
     logger.info("使用轻量级分类器，跳过分类器训练步骤")
     
     run_graph_construction(config, work_dir, logger)
