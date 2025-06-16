@@ -18,6 +18,39 @@ def read_json(file_path: str) -> List[str]:
             return [item.get("content", "") for item in data if isinstance(item, dict) and "content" in item]
         return []
 
+def read_jsonl(file_path: str) -> List[str]:
+    """读取JSONL文件内容"""
+    paragraphs = []
+    with open(file_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    data = json.loads(line)
+                    if isinstance(data, dict):
+                        # 支持多种常见的内容字段名
+                        content = (
+                            data.get("content") or 
+                            data.get("text") or 
+                            data.get("body") or 
+                            data.get("message") or
+                            data.get("question") or
+                            data.get("answer")
+                        )
+                        if content and isinstance(content, str):
+                            paragraphs.append(content.strip())
+                        
+                        # 处理paragraphs字段（如musique数据集）
+                        if "paragraphs" in data and isinstance(data["paragraphs"], list):
+                            for para in data["paragraphs"]:
+                                if isinstance(para, dict) and "paragraph_text" in para:
+                                    para_text = para["paragraph_text"]
+                                    if para_text and isinstance(para_text, str):
+                                        paragraphs.append(para_text.strip())
+                except json.JSONDecodeError:
+                    continue
+    return paragraphs
+
 def split_into_sentences(text: str) -> List[str]:
     text = text.strip().replace("\n", " ").replace("\r", " ")
     pattern = r'(?<=[。！？；.!?;])'
@@ -200,7 +233,7 @@ def apply_overlap(chunks: List[str], chunk_overlap: int) -> List[str]:
 
 def run_document_processing(config: dict, work_dir: str, logger):
     input_dir = config["document"]["input_dir"]
-    allowed_types = config["document"].get("allowed_types", [".docx", ".json"])
+    allowed_types = config["document"].get("allowed_types", [".docx", ".json", ".jsonl"])
     sim_threshold = config["document"].get("similarity_threshold", 0.80)
     redundancy_threshold = config["document"].get("redundancy_threshold", 0.95)  # ✅ 可配置
     
@@ -235,6 +268,8 @@ def run_document_processing(config: dict, work_dir: str, logger):
                 paragraphs = read_docx(file_path)
             elif ext == ".json":
                 paragraphs = read_json(file_path)
+            elif ext == ".jsonl":
+                paragraphs = read_jsonl(file_path)
             else:
                 continue
 

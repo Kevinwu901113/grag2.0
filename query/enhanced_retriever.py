@@ -183,12 +183,17 @@ class EnhancedRetriever:
         Returns:
             检索结果列表
         """
+        import time
+        retrieve_start = time.time()
+        
         if top_k is None:
             top_k = self.final_top_k
             
         all_candidates = []
+        timing_info = {}
         
         # 1. 查询扩展
+        expansion_start = time.time()
         queries = [query]
         if self.enable_query_expansion:
             try:
@@ -197,46 +202,74 @@ class EnhancedRetriever:
                 print(f"🔍 查询扩展: {len(queries)}个查询")
             except Exception as e:
                 print(f"查询扩展失败: {e}")
+        
+        timing_info['query_expansion'] = time.time() - expansion_start
+        print(f"  ⏱️ 查询扩展耗时: {timing_info['query_expansion']:.3f}秒")
                 
         # 2. 向量检索
+        vector_start = time.time()
         vector_candidates = self._vector_retrieval(queries)
         all_candidates.extend(vector_candidates)
+        timing_info['vector_retrieval'] = time.time() - vector_start
+        print(f"  ⏱️ 向量检索耗时: {timing_info['vector_retrieval']:.3f}秒")
         
         # 3. BM25检索
+        bm25_start = time.time()
         bm25_candidates = []
         if self.enable_bm25 and self.bm25_retriever:
             bm25_candidates = self._bm25_retrieval(queries)
             all_candidates.extend(bm25_candidates)
+        timing_info['bm25_retrieval'] = time.time() - bm25_start
+        print(f"  ⏱️ BM25检索耗时: {timing_info['bm25_retrieval']:.3f}秒")
             
         # 4. 图谱实体检索
+        graph_start = time.time()
         graph_candidates = []
         if self.enable_graph_retrieval and self.graph and self.entity_names:
             graph_candidates = self._graph_entity_retrieval(query)
             all_candidates.extend(graph_candidates)
+        timing_info['graph_retrieval'] = time.time() - graph_start
+        print(f"  ⏱️ 图谱检索耗时: {timing_info['graph_retrieval']:.3f}秒")
             
         # 5. 增强图检索（新增）
+        enhanced_graph_start = time.time()
         enhanced_graph_candidates = []
         if self.use_enhanced_graph and self.graph_retriever:
             enhanced_graph_candidates = self._enhanced_graph_retrieval(query)
             all_candidates.extend(enhanced_graph_candidates)
+        timing_info['enhanced_graph_retrieval'] = time.time() - enhanced_graph_start
+        print(f"  ⏱️ 增强图检索耗时: {timing_info['enhanced_graph_retrieval']:.3f}秒")
             
         # 6. 去重合并
+        dedup_start = time.time()
         unique_candidates = self._deduplicate_candidates(all_candidates)
+        timing_info['deduplication'] = time.time() - dedup_start
+        print(f"  ⏱️ 去重合并耗时: {timing_info['deduplication']:.3f}秒")
         
         # 6.5. 得分归一化（新增）
+        norm_start = time.time()
         if unique_candidates:
             from utils.common import normalize_scores
             unique_candidates = normalize_scores(unique_candidates, 'similarity', 'minmax')
+        timing_info['score_normalization'] = time.time() - norm_start
+        print(f"  ⏱️ 得分归一化耗时: {timing_info['score_normalization']:.3f}秒")
         
         # 7. 重排序
+        rerank_start = time.time()
         if unique_candidates and self.enable_reranking:
             final_results = self.reranker.rerank(query, unique_candidates, top_k)
         else:
             # 使用归一化后的得分排序
             unique_candidates.sort(key=lambda x: x.get('normalized_similarity', x.get('similarity', 0)), reverse=True)
             final_results = unique_candidates[:top_k] if unique_candidates else []
-            
+        timing_info['final_reranking'] = time.time() - rerank_start
+        print(f"  ⏱️ 最终重排序耗时: {timing_info['final_reranking']:.3f}秒")
+        
+        total_retrieve_time = time.time() - retrieve_start
+        timing_info['total_retrieval'] = total_retrieve_time
+        
         print(f"📊 检索统计: 向量{len(vector_candidates)}条, BM25{len(bm25_candidates)}条, 图谱{len(graph_candidates)}条, 增强图{len(enhanced_graph_candidates)}条, 去重后{len(unique_candidates)}条, 最终{len(final_results)}条")
+        print(f"📊 增强检索总耗时: {total_retrieve_time:.3f}秒")
         
         return final_results
         

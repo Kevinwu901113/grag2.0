@@ -20,6 +20,39 @@ def read_json(file_path: str) -> List[str]:
             return [item.get("content", "") for item in data if isinstance(item, dict) and "content" in item]
         return []
 
+def read_jsonl(file_path: str) -> List[str]:
+    """读取JSONL文件内容"""
+    paragraphs = []
+    with open(file_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    data = json.loads(line)
+                    if isinstance(data, dict):
+                        # 支持多种常见的内容字段名
+                        content = (
+                            data.get("content") or 
+                            data.get("text") or 
+                            data.get("body") or 
+                            data.get("message") or
+                            data.get("question") or
+                            data.get("answer")
+                        )
+                        if content and isinstance(content, str):
+                            paragraphs.append(content.strip())
+                        
+                        # 处理paragraphs字段（如musique数据集）
+                        if "paragraphs" in data and isinstance(data["paragraphs"], list):
+                            for para in data["paragraphs"]:
+                                if isinstance(para, dict) and "paragraph_text" in para:
+                                    para_text = para["paragraph_text"]
+                                    if para_text and isinstance(para_text, str):
+                                        paragraphs.append(para_text.strip())
+                except json.JSONDecodeError:
+                    continue
+    return paragraphs
+
 def read_txt(file_path: str) -> List[str]:
     """读取TXT文件内容"""
     with open(file_path, 'r', encoding='utf-8') as f:
@@ -74,7 +107,7 @@ class EnhancedDocumentProcessor:
         Returns:
             处理结果字典
         """
-        allowed_types = self.config["document"].get("allowed_types", [".docx", ".json", ".txt"])
+        allowed_types = self.config["document"].get("allowed_types", [".docx", ".json", ".jsonl", ".txt"])
         
         logger.info(f"使用处理模式: {self.processing_mode}")
         
@@ -127,6 +160,8 @@ class EnhancedDocumentProcessor:
                     paragraphs = read_docx(file_path)
                 elif ext == ".json":
                     paragraphs = read_json(file_path)
+                elif ext == ".jsonl":
+                    paragraphs = read_jsonl(file_path)
                 elif ext == ".txt":
                     paragraphs = read_txt(file_path)
                 else:

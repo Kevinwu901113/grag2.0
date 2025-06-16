@@ -1,11 +1,12 @@
-import os
 import json
+import os
 import faiss
 import numpy as np
 from query.optimized_theme_matcher import ThemeMatcher
 from query.reranker import SimpleReranker, LLMReranker
 from query.enhanced_retriever import EnhancedRetriever
 from query.query_rewriter import QueryRewriter, is_query_rewrite_enabled
+from query.context_scheduler import PriorityContextScheduler
 from llm.llm import LLMClient
 from llm.answer_selector import AnswerSelector
 from graph.graph_utils import extract_entity_names, match_entities_in_query, extract_subgraph, summarize_subgraph
@@ -116,8 +117,10 @@ def handle_query(query: str, config: dict, work_dir: str, mode: str = "auto", pr
     """
     import time
     start_time = time.time()
+    timing_info = {}  # 存储各环节的计时信息
     
-    # 查询改写处理
+    # 1. 查询改写处理
+    rewrite_start = time.time()
     original_query = query
     rewrite_result = None
     
@@ -140,6 +143,11 @@ def handle_query(query: str, config: dict, work_dir: str, mode: str = "auto", pr
             print(f"⚠️ 查询改写失败，使用原始查询: {e}")
             query = original_query
     
+    timing_info['query_rewrite'] = time.time() - rewrite_start
+    print(f"⏱️ 查询改写耗时: {timing_info['query_rewrite']:.3f}秒")
+    
+    # 2. 数据加载
+    load_start = time.time()
     llm = LLMClient(config)
     chunks = load_chunks(work_dir)
     index, id_map = load_vector_index(work_dir)
@@ -149,23 +157,35 @@ def handle_query(query: str, config: dict, work_dir: str, mode: str = "auto", pr
     graph = load_graph(work_dir) if os.path.exists(graph_path) else None
     entity_names = extract_entity_names(graph) if graph else set()
     
-    # 如果是auto模式，进行自动分类
+    timing_info['data_loading'] = time.time() - load_start
+    print(f"⏱️ 数据加载耗时: {timing_info['data_loading']:.3f}秒")
+    
+    # 3. 查询分类
+    classification_start = time.time()
     if mode == "auto":
         original_mode, original_precise = classify_query_lightweight(query, config)
         from query.query_enhancer import enhance_query_classification
         mode, precise = enhance_query_classification(query, original_mode, original_precise)
     
+    timing_info['query_classification'] = time.time() - classification_start
+    print(f"⏱️ 查询分类耗时: {timing_info['query_classification']:.3f}秒")
+    
     # 处理norag模式
     if mode == "norag":
+        norag_start = time.time()
         response = llm.generate(f"请回答以下问题：\n{query}")
+        timing_info['norag_generation'] = time.time() - norag_start
+        print(f"⏱️ NoRAG生成耗时: {timing_info['norag_generation']:.3f}秒")
         return {
             'answer': response.strip(),
             'sources': [],
             'processing_time': time.time() - start_time,
-            'enhanced_retrieval': False
+            'enhanced_retrieval': False,
+            'timing_info': timing_info
         }
     
-    # 检索候选文档
+    # 4. 文档检索
+    retrieval_start = time.time()
     candidates = []
     
     if use_enhanced_retrieval:
@@ -196,7 +216,11 @@ def handle_query(query: str, config: dict, work_dir: str, mode: str = "auto", pr
                     }
                     candidates.append(candidate)
     
-    # 应用重排序
+    timing_info['document_retrieval'] = time.time() - retrieval_start
+    print(f"⏱️ 文档检索耗时: {timing_info['document_retrieval']:.3f}秒")
+    
+    # 5. 重排序
+    rerank_start = time.time()
     if use_reranker != "none" and candidates:
         rerank_config = config.get("rerank", {})
         if use_reranker == "llm":
@@ -204,10 +228,21 @@ def handle_query(query: str, config: dict, work_dir: str, mode: str = "auto", pr
         else:
             reranker = SimpleReranker(rerank_config)
         
-        candidates = reranker.rerank(query, candidates, top_k=5)
-    else:
-        candidates = candidates[:5]
+        candidates = reranker.rerank(query, candidates, top_k=10)  # 增加重排序数量供调度器选择
     
+    timing_info['reranking'] = time.time() - rerank_start
+    print(f"⏱️ 重排序耗时: {timing_info['reranking']:.3f}秒")
+    
+    # 6. 上下文调度
+    scheduling_start = time.time()
+    context_scheduler = PriorityContextScheduler(config)
+    candidates = context_scheduler.schedule_candidates(candidates)
+    
+    timing_info['context_scheduling'] = time.time() - scheduling_start
+    print(f"⏱️ 上下文调度耗时: {timing_info['context_scheduling']:.3f}秒")
+    
+    # 7. 文本提取和图谱处理
+    graph_start = time.time()
     # 提取文本用于生成回答
     retrieved = [c['text'] for c in candidates]
     context = "\n".join(retrieved) if retrieved else "（未检索到相关文本内容）"
@@ -222,7 +257,11 @@ def handle_query(query: str, config: dict, work_dir: str, mode: str = "auto", pr
         except Exception:
             pass
     
-    # 生成回答 - 使用答案选择器
+    timing_info['graph_processing'] = time.time() - graph_start
+    print(f"⏱️ 图谱处理耗时: {timing_info['graph_processing']:.3f}秒")
+    
+    # 8. 答案生成
+    generation_start = time.time()
     answer_selector_config = config.get('answer_selector', {})
     answer_selector = AnswerSelector(llm, answer_selector_config)
     
@@ -246,10 +285,30 @@ def handle_query(query: str, config: dict, work_dir: str, mode: str = "auto", pr
         entities=entities
     )
     
-    return {
+    timing_info['answer_generation'] = time.time() - generation_start
+    print(f"⏱️ 答案生成耗时: {timing_info['answer_generation']:.3f}秒")
+    
+    # 计算总处理时间
+    total_time = time.time() - start_time
+    timing_info['total_processing'] = total_time
+    
+    # 输出详细计时统计
+    print(f"\n📊 详细计时统计:")
+    print(f"  查询改写: {timing_info.get('query_rewrite', 0):.3f}秒")
+    print(f"  数据加载: {timing_info.get('data_loading', 0):.3f}秒")
+    print(f"  查询分类: {timing_info.get('query_classification', 0):.3f}秒")
+    print(f"  文档检索: {timing_info.get('document_retrieval', 0):.3f}秒")
+    print(f"  重排序: {timing_info.get('reranking', 0):.3f}秒")
+    print(f"  上下文调度: {timing_info.get('context_scheduling', 0):.3f}秒")
+    print(f"  图谱处理: {timing_info.get('graph_processing', 0):.3f}秒")
+    print(f"  答案生成: {timing_info.get('answer_generation', 0):.3f}秒")
+    print(f"  总计: {total_time:.3f}秒")
+    
+    # 构建返回结果
+    result = {
         'answer': answer.strip(),
         'sources': candidates,
-        'processing_time': time.time() - start_time,
+        'processing_time': total_time,
         'enhanced_retrieval': use_enhanced_retrieval,
         'answer_selection': selection_metadata,
         'query_rewrite': {
@@ -257,8 +316,83 @@ def handle_query(query: str, config: dict, work_dir: str, mode: str = "auto", pr
             'original_query': original_query,
             'final_query': query,
             'rewrite_result': rewrite_result
-        }
+        },
+        'timing_info': timing_info
     }
+    
+    # 保存查询记录到query.json文件
+    try:
+        # 构建详细的召回文档信息
+        sources_detail = []
+        for i, source in enumerate(candidates, 1):
+            source_info = {
+                'rank': i,
+                'id': source.get('id', 'unknown'),
+                'similarity': source.get('similarity', 0),
+                'text': source['text'],
+                'title': source.get('title', ''),
+                'source_type': source.get('source', 'unknown')
+            }
+            
+            # 添加检索类型信息
+            if 'retrieval_types' in source:
+                source_info['retrieval_types'] = source['retrieval_types']
+            elif 'retrieval_type' in source:
+                source_info['retrieval_type'] = source['retrieval_type']
+            
+            sources_detail.append(source_info)
+        
+        query_record = {
+            'query': {
+                'original': original_query,
+                'final': query,
+                'mode': mode,
+                'precise': precise,
+                'use_reranker': use_reranker,
+                'use_enhanced_retrieval': use_enhanced_retrieval
+            },
+            'result': {
+                'answer': result['answer'],
+                'sources_count': len(result['sources']),
+                'processing_time': result['processing_time'],
+                'enhanced_retrieval': result['enhanced_retrieval']
+            },
+            'sources': sources_detail,
+            'metadata': {
+                'answer_selection': result['answer_selection'],
+                'query_rewrite': result['query_rewrite']
+            },
+            'timestamp': time.time()
+        }
+        
+        # 确保输出目录存在
+        query_json_path = os.path.join(work_dir, 'query.json')
+        
+        # 如果文件已存在，读取现有内容并追加新记录
+        if os.path.exists(query_json_path):
+            try:
+                with open(query_json_path, 'r', encoding='utf-8') as f:
+                    existing_data = json.load(f)
+                if not isinstance(existing_data, list):
+                    existing_data = [existing_data]  # 兼容旧格式
+            except (json.JSONDecodeError, Exception):
+                existing_data = []  # 如果文件损坏，重新开始
+        else:
+            existing_data = []
+        
+        # 添加新记录
+        existing_data.append(query_record)
+        
+        # 保存到文件
+        with open(query_json_path, 'w', encoding='utf-8') as f:
+            json.dump(existing_data, f, ensure_ascii=False, indent=2)
+            
+        print(f"\n📄 查询记录已保存到: {query_json_path}")
+        
+    except Exception as e:
+        print(f"⚠️ 保存查询记录失败: {e}")
+    
+    return result
 
 def run_query_loop(config: dict, work_dir: str, logger=None):
     """
@@ -369,7 +503,30 @@ def run_query_loop(config: dict, work_dir: str, logger=None):
             
             processing_time = result['processing_time']
             enhanced_status = "(增强检索)" if result.get('enhanced_retrieval') else "(传统检索)"
-            print(f"\n⏱️ 处理时间: {processing_time:.2f}秒 {enhanced_status}")
+            print(f"\n⏱️ 总处理时间: {processing_time:.2f}秒 {enhanced_status}")
+            
+            # 显示详细计时信息（如果有的话）
+            if 'timing_info' in result:
+                timing = result['timing_info']
+                print(f"\n📊 各环节耗时详情:")
+                if timing.get('query_rewrite', 0) > 0:
+                    print(f"  查询改写: {timing['query_rewrite']:.3f}秒")
+                if timing.get('data_loading', 0) > 0:
+                    print(f"  数据加载: {timing['data_loading']:.3f}秒")
+                if timing.get('query_classification', 0) > 0:
+                    print(f"  查询分类: {timing['query_classification']:.3f}秒")
+                if timing.get('document_retrieval', 0) > 0:
+                    print(f"  文档检索: {timing['document_retrieval']:.3f}秒")
+                if timing.get('reranking', 0) > 0:
+                    print(f"  重排序: {timing['reranking']:.3f}秒")
+                if timing.get('context_scheduling', 0) > 0:
+                    print(f"  上下文调度: {timing['context_scheduling']:.3f}秒")
+                if timing.get('graph_processing', 0) > 0:
+                    print(f"  图谱处理: {timing['graph_processing']:.3f}秒")
+                if timing.get('answer_generation', 0) > 0:
+                    print(f"  答案生成: {timing['answer_generation']:.3f}秒")
+                if timing.get('norag_generation', 0) > 0:
+                    print(f"  NoRAG生成: {timing['norag_generation']:.3f}秒")
             
         except KeyboardInterrupt:
             print("\n\n再见！")
