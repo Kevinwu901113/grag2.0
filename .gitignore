@@ -1,0 +1,45 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+env/
+venv/
+build/
+dist/
+.eggs/
+*.egg-info/
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+
+# PyInstaller
+*.spec
+
+# Logs and results
+logs/
+result/
+data/
+*.log
+*.jsonl
+*.graphml
+*.index
+*.pkl
+
+# Config and secrets
+config.local.yaml
+*.env
+
+# VSCode
+.vscode/
+
+# macOS / Linux
+.DS_Store
+*.swp
+hf_models/
+config.yaml

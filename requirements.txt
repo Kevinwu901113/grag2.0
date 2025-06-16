@@ -1,0 +1,36 @@
+# requirements.txt
+
+# Core
+numpy>=1.21.0
+scikit-learn>=1.3.0
+scipy>=1.10.0
+matplotlib>=3.6.0
+faiss-cpu>=1.7.0
+joblib>=1.1.0
+# 移除hdbscan聚类依赖
+
+# LLM APIs
+openai>=1.0.0
+requests>=2.25.0
+
+# NLP
+python-docx>=0.8.11
+sentence-transformers>=2.2.0
+transformers>=4.21.0
+torch>=1.12.0
+tqdm>=4.64.0
+
+# Graph
+networkx>=2.8
+
+# Logging & Console
+loguru>=0.6.0
+
+# Chinese text processing
+jieba>=0.42.1
+
+# Search
+rank-bm25>=0.2.2
+
+# Optional: fasttext if future classification needed
+# fasttext>=0.9.2
