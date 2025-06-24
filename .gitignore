@@ -43,3 +43,4 @@ config.local.yaml
 *.swp
 hf_models/
 config.yaml
+cache/

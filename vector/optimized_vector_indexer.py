@@ -37,8 +37,21 @@ def run_vector_indexer(config: dict, work_dir: str, logger=None):
     
     # 初始化LLM客户端
     llm = LLMClient(config)
-    texts = [c['text'] for c in chunks]
-    ids = [c['id'] for c in chunks]
+    
+    # 处理不同数据格式的兼容性
+    texts = []
+    ids = []
+    for c in chunks:
+        if 'text' in c:
+            texts.append(c['text'])
+        elif 'sentences' in c:
+            # 处理static_chunk_processor生成的格式
+            text = "\n".join(c['sentences']) if isinstance(c['sentences'], list) else str(c['sentences'])
+            texts.append(text)
+        else:
+            logger.warning(f"块 {c.get('id', 'unknown')} 缺少文本内容，跳过处理")
+            continue
+        ids.append(c['id'])
     
     # 获取批处理大小，默认为100
     batch_size = config.get("vector", {}).get("batch_size", 100)

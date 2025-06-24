@@ -17,7 +17,7 @@ def create_new_work_dir(base_dir: str) -> str:
     return work_dir
 
 def resolve_work_dir(config: dict, args) -> str:
-    base_dir = config["output"]["base_dir"]
+    base_dir = config["output"]["work_dir"]
 
     if hasattr(args, 'work_dir') and args.work_dir:
         return args.work_dir

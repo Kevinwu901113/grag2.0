@@ -32,7 +32,18 @@ class BM25Retriever:
         self.chunks = chunks
         self.k1 = k1
         self.b = b
-        self.doc_texts = [chunk['text'] for chunk in chunks]
+        # 处理不同数据格式的兼容性
+        self.doc_texts = []
+        for chunk in chunks:
+            if 'text' in chunk:
+                self.doc_texts.append(chunk['text'])
+            elif 'sentences' in chunk:
+                # 处理static_chunk_processor生成的格式
+                text = "\n".join(chunk['sentences']) if isinstance(chunk['sentences'], list) else str(chunk['sentences'])
+                self.doc_texts.append(text)
+            else:
+                print(f"警告: 块 {chunk.get('id', 'unknown')} 缺少文本内容，跳过处理")
+                continue
         self.doc_lengths = [len(list(jieba.cut(text))) for text in self.doc_texts]
         self.avg_doc_length = sum(self.doc_lengths) / len(self.doc_lengths) if self.doc_lengths else 0
         

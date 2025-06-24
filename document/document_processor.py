@@ -1,11 +1,14 @@
 import os
 import re
 import json
+import os
 from typing import List
 from docx import Document
-from llm.llm import LLMClient  
+from llm.llm import LLMClient
+from tqdm import tqdm  
 from document.topic_pool_manager import TopicPoolManager
 from document.redundancy_buffer import RedundancyBuffer  # ✅ 新增
+from redundancy.simhash_buffer import SimHashBuffer  # ✅ 新增SimHash支持
 
 def read_docx(file_path: str) -> List[str]:
     doc = Document(file_path)
@@ -244,7 +247,31 @@ def run_document_processing(config: dict, work_dir: str, logger):
     logger.info(f"使用分块参数: chunk_size={chunk_size}, chunk_overlap={chunk_overlap}")
     llm_client = LLMClient(config)
 
-    redundancy_filter = RedundancyBuffer(threshold=redundancy_threshold)
+    # ✅ 根据配置选择冗余检测方法
+    redundancy_config = config.get("redundancy", {})
+    redundancy_method = redundancy_config.get("method", "embedding")  # 默认使用embedding方法
+    
+    if redundancy_method == "simhash":
+        # 使用SimHash方法
+        simhash_config = {
+            'hamming_threshold': redundancy_config.get('hamming_threshold', 3),
+            'max_buffer_size': redundancy_config.get('max_buffer_size', 100000),
+            'enable_logging': True,
+            'enable_progress': True,
+            'log_interval': redundancy_config.get('log_interval', 1000)
+        }
+        redundancy_filter = SimHashBuffer(simhash_config)
+        logger.info(f"使用SimHash冗余检测方法，Hamming距离阈值: {simhash_config['hamming_threshold']}")
+    else:
+        # 使用传统的embedding方法
+        embedding_config = {
+            'threshold': redundancy_threshold,
+            'enable_logging': True,
+            'enable_progress': True,
+            'log_interval': 100
+        }
+        redundancy_filter = RedundancyBuffer(embedding_config)
+        logger.info(f"使用传统embedding冗余检测方法，相似度阈值: {redundancy_threshold}")
     
     # 传递配置给TopicPoolManager，统一使用LLMClient进行嵌入
     topic_manager = TopicPoolManager(
@@ -255,15 +282,18 @@ def run_document_processing(config: dict, work_dir: str, logger):
     )
 
     chunk_id = 0
-
+    
+    # 首先计算总的文档块数量
+    total_chunks = 0
+    file_chunks_map = {}
+    
     for filename in os.listdir(input_dir):
         ext = os.path.splitext(filename)[-1].lower()
         file_path = os.path.join(input_dir, filename)
         if ext not in allowed_types:
             continue
-
+            
         try:
-            logger.info(f"正在处理文件: {filename}")
             if ext == ".docx":
                 paragraphs = read_docx(file_path)
             elif ext == ".json":
@@ -272,14 +302,24 @@ def run_document_processing(config: dict, work_dir: str, logger):
                 paragraphs = read_jsonl(file_path)
             else:
                 continue
-
+                
             # 将所有段落合并为完整文本
             full_text = "\n".join(paragraphs)
             
             # 使用改进的分块策略
             chunks = split_into_chunks_with_overlap(full_text, chunk_size, chunk_overlap)
+            file_chunks_map[filename] = chunks
+            total_chunks += len(chunks)
             
-            logger.info(f"文件 {filename} 分割为 {len(chunks)} 个块")
+        except (ValueError, IOError, UnicodeDecodeError, KeyError) as e:
+            logger.error(f"预处理文件 {filename} 时出错: {str(e)}")
+    
+    logger.info(f"开始处理文档，预计处理 {total_chunks} 个文档块")
+    
+    # 使用进度条处理所有文档块
+    with tqdm(total=total_chunks, desc="文档块处理进度", unit="块") as pbar:
+        for filename, chunks in file_chunks_map.items():
+            logger.info(f"正在处理文件: {filename}，共 {len(chunks)} 个块")
             
             for chunk_text in chunks:
                 meta = {
@@ -288,9 +328,7 @@ def run_document_processing(config: dict, work_dir: str, logger):
                 }
                 topic_manager.add_sentence(chunk_text, meta)
                 chunk_id += 1
-
-        except (ValueError, IOError, UnicodeDecodeError, KeyError) as e:
-            logger.error(f"处理文件 {filename} 时出错: {str(e)}")
+                pbar.update(1)
 
     # 输出主题聚合块
     out_chunks = topic_manager.get_all_topics(llm_client=llm_client)
@@ -302,5 +340,15 @@ def run_document_processing(config: dict, work_dir: str, logger):
     # ✅ 输出冗余句日志
     redundant_log_path = os.path.join(work_dir, "redundant_sentences.json")
     with open(redundant_log_path, 'w', encoding='utf-8') as f:
-        json.dump(redundancy_filter.get_redundant_log(), f, ensure_ascii=False, indent=2)
-    logger.info(f"冗余句共计 {len(redundancy_filter.get_redundant_log())} 条，已记录至 {redundant_log_path}")
+        # 根据冗余检测方法获取不同的记录
+        if redundancy_method == "simhash":
+            redundant_records = redundancy_filter.get_redundant_records()
+        else:
+            redundant_records = redundancy_filter.get_redundant_log() if hasattr(redundancy_filter, 'get_redundant_log') else redundancy_filter.redundant
+        
+        json.dump(redundant_records, f, ensure_ascii=False, indent=2)
+    logger.info(f"冗余句共计 {len(redundant_records)} 条，已记录至 {redundant_log_path}")
+    
+    # ✅ 输出统计信息
+    stats = redundancy_filter.get_statistics()
+    logger.info(f"冗余检测统计: {stats}")

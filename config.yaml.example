@@ -1,312 +1,236 @@
-# ===== LLM配置 =====
+# G-RAG 统一配置文件
+# 整合了所有功能模块的配置选项
+
+# ================================
+# LLM 配置
+# ================================
 llm:
-  provider: "ollama"                     # LLM提供商: ollama, openai
-  model_name: "qwen2.5:7b-instruct-fp16" # 模型名称
-  openai_api_key: "sk-..."               # OpenAI API密钥（使用openai provider时需要）
-  openai_base_url: "https://api.deepseek.com/v1"  # OpenAI API基础URL
-  host: "http://localhost:11434"         # Ollama服务地址
+  provider: "ollama"  # 支持: ollama, openai, huggingface
+  model_name: "qwen2.5:7b-instruct-fp16"
+  host: "http://localhost:11434"
+  timeout: 30
+  max_retries: 3
   options:
-    num_ctx: 32768                      # 上下文长度
-    temperature: 0.1                    # 生成温度
-    max_tokens: 4000                    # 最大生成token数
+    num_ctx: 32768
+    temperature: 0.1
+    max_tokens: 4000
+  
+  # OpenAI 配置（当provider为openai时使用）
+  # api_key: "your_api_key_here"
+  # openai_api_key: "your_api_key_here"
+  # base_url: "https://api.openai.com/v1"
+  # openai_base_url: "https://api.openai.com/v1"
+  # model: "gpt-3.5-turbo"
+  # embedding_model: "text-embedding-ada-002"
 
-# ===== 嵌入模型配置 =====
+# ================================
+# 嵌入模型配置
+# ================================
 embedding:
-  provider: "ollama"                     # 嵌入模型提供商
-  model_name: "BAAI/bge-m3"              # 嵌入模型名称
-  host: "http://localhost:11434"         # 服务地址
+  provider: huggingface  # 支持: huggingface, ollama, openai
+  model_name: "BAAI/bge-m3"  # HuggingFace模型
+  device: "cuda"  # 设备: cuda, cpu, auto
+  normalize: true  # L2归一化
+  dimension: 1024  # 嵌入维度
+  cache_embeddings: true
+  cache_size: 10000
+  batch_size: 16  # 减小批量大小以避免CUDA内存不足
+  local_files_only: true  # 离线模式，仅使用本地模型文件
+  # CUDA内存优化配置
+  max_seq_length: 512  # 限制最大序列长度
+  enable_memory_optimization: true  # 启用内存优化
+  
+  # Ollama配置（当provider为ollama时使用）
+  # host: "http://localhost:11434"
+  # model_name: "nomic-embed-text:latest"
+  
+  # OpenAI配置（当provider为openai时使用）
+  # api_key: "your_api_key_here"
+  # model_name: "text-embedding-ada-002"
 
-# ===== 文档处理配置 =====
+# ================================
+# 文档处理配置
+# ================================
 document:
-  input_dir: "./data"                   # 输入文档目录
-  processing_mode: "enhanced"            # 处理模式: traditional, enhanced (移除advanced聚类模式)
-  
-  # 基础分块参数（传统模式）
-  chunk_size: 800                       # 每个块的最大字符数
-  chunk_overlap: 300                    # 块之间的重叠字符数
-  
-  # 文件类型和阈值
-  allowed_types: [".docx", ".json", ".txt", ".md"]  # 允许的文件类型
-  similarity_threshold: 0.80            # 主题相似度阈值
-  redundancy_threshold: 0.95            # 冗余过滤阈值
-  
-  # 增强功能开关
-  enable_redundancy_filter: true        # 是否启用冗余过滤
-  sentence_level_traditional: false     # 传统模式下是否启用句子级处理
+  input_dir: "./data/test"
+  processing_mode: "clustered"  # 支持: enhanced, clustered, traditional
+  chunk_size: 500
+  chunk_overlap: 300
+  allowed_types: [".docx", ".json", ".jsonl", ".txt", ".md"]
+  similarity_threshold: 0.80
+  redundancy_threshold: 0.95
+  sentence_level_traditional: true
+  sentence_level: true
+  min_sentence_length: 10
+  max_sentence_length: 1000
+  embedding_batch_size: 8  # 减小批量大小以避免CUDA内存不足
+  enable_redundancy_filter: true
 
-# ===== 实体抽取配置 =====
-entity_extraction:
-  use_ner_model: true                   # 是否使用NER模型
-  ner_model_name: "ckiplab/bert-base-chinese-ner"  # NER模型名称
-  use_rule_based: true                  # 是否使用规则方法
-  min_entity_length: 2                  # 最小实体长度
-  max_entity_length: 20                 # 最大实体长度
-  entity_confidence_threshold: 0.8      # 实体置信度阈值
-  deduplicate_entities: true            # 是否去重实体
-  
-  # 上下文验证配置
-  enable_context_validation: true       # 是否启用上下文验证
-  context_window: 50                    # 上下文窗口大小（字符数）
-  
-  # 过滤配置
-  generic_word_filter: true             # 是否过滤通用词
-  filter_single_char: true              # 是否过滤单字符实体
-  filter_numbers_only: true             # 是否过滤纯数字实体
-  
-  # 实体类型映射
-  entity_type_mapping:
-    "PERSON": "人物"
-    "ORG": "组织"
-    "GPE": "地点"
-    "PRODUCT": "产品"
-    "EVENT": "事件"
-    "WORK_OF_ART": "作品"
-    "LAW": "法律"
-    "LANGUAGE": "语言"
-    "DATE": "日期"
-    "TIME": "时间"
-    "PERCENT": "百分比"
-    "MONEY": "货币"
-    "QUANTITY": "数量"
-    "ORDINAL": "序数"
-    "CARDINAL": "基数"
+# ================================
+# 聚类文档处理配置
+# ================================
+document_processing:
+  strategy: "clustered"  # 可选：clustered 或 incremental
+  chunk_length: 200  # 文本块字符数
+  min_chunk_length: 50  # 最小块长度
+  cluster_count: 50  # 聚类数量，null 表示自动估算
+  auto_estimate_clusters: true  # 是否自动估算聚类数
+  min_clusters: 5  # 最小聚类数
+  max_clusters: 100  # 最大聚类数
+  clustering_method: "kmeans"  # 聚类方法：kmeans 或 faiss
+  enable_scaling: false  # 是否对特征进行标准化
+  enable_quality_assessment: true  # 是否启用聚类质量评估
+  max_chunks_per_block: 100  # 每个主题块最大文本块数
+  max_summary_length: 200  # 摘要最大长度
+  min_block_size: 2  # 最小主题块大小（文本块数量）
+  max_block_size: 50  # 最大主题块大小
+  log_cluster_distribution: true  # 是否记录聚类分布
+  random_state: 42  # 随机种子
+  max_iter: 300  # 最大迭代次数
+  n_init: 10  # 初始化次数
 
-# ===== 增强冗余过滤配置 =====
-redundancy_filter:
-  base_threshold: 0.95                  # 基础相似度阈值
-  enable_enhanced_filter: false         # 是否启用增强过滤
-  enable_dynamic_threshold: true        # 是否启用动态阈值
-  context_window: 100                   # 上下文窗口大小（字符数）
-  length_factor_weight: 0.3             # 长度因子权重
-  semantic_weight: 0.8                  # 语义相似度权重
-  context_weight: 0.2                   # 上下文相似度权重
-  max_history_size: 100                 # 最大历史记录数量
+# ================================
+# 主题池管理配置
+# ================================
+topic_pool:
+  enable_parallel: false
+  max_workers: 32
+  batch_size: 16  # 减小批量大小以避免CUDA内存不足
+  enable_topic_merging: true
+  topic_merge_threshold: 0.85
+  enable_document_isolation: false
+  enable_embedding_cache: true
+  embedding_cache_size: 10000
 
-# ===== 图构建配置 =====
+# ================================
+# 冗余检测配置
+# ================================
+redundancy:
+  method: "simhash"  # 冗余检测方法: simhash, embedding
+  
+  # SimHash方法配置（推荐用于大规模数据）
+  hamming_threshold: 3  # Hamming距离阈值，越小越严格（推荐1-5）
+  max_buffer_size: 100000  # 最大签名缓冲区大小，防止内存溢出
+  log_interval: 100  # 每处理多少句子输出一次日志
+  enable_logging: true
+  enable_progress: true
+  
+  # 传统embedding方法配置（当method为"embedding"时使用）
+  enable_enhanced: false
+  similarity_threshold: 0.95
+  context_weight: 0.3
+  content_weight: 0.7
+
+# ================================
+# 知识图谱配置
+# ================================
 graph:
-  top_k_relations: 5                    # 保留的关系数量
+  enable_graph: true
+  entity_extraction_model: "qwen2.5:7b-instruct-fp16"
+  relation_extraction_model: "qwen2.5:7b-instruct-fp16"
+  max_entities_per_chunk: 30  # 降低以提高性能
+  max_relations_per_chunk: 50  # 降低以提高性能
+  entity_similarity_threshold: 0.8
+  relation_similarity_threshold: 0.7
+  # 新增性能优化参数
+  batch_size: 8  # 批处理大小
+  max_text_length: 800  # 最大文本长度
+  enable_parallel_processing: false  # 暂时禁用并行处理避免GPU竞争
   
-graph_construction:
-  enable_reverse_links: true            # 是否启用实体到主题的反向链接
-  max_entities_per_topic: 50            # 每个主题最大实体数量
-  relation_confidence_threshold: 0.7    # 关系置信度阈值
-  entity_topic_relation: "属于主题"      # 实体到主题的关系名称
-  topic_entity_relation: "包含"         # 主题到实体的关系名称
-  enable_entity_clustering: true        # 是否启用实体聚类
-  entity_similarity_threshold: 0.85     # 实体相似度阈值
-  max_graph_size: 10000                 # 最大图节点数量
+  # 实体抽取配置
+  entity_extraction:
+    use_ner_model: true  # 启用NER模型，支持中英文实体抽取
+    ner_model_name_en: "dbmdz/bert-large-cased-finetuned-conll03-english"  # 英文NER模型名称
+    local_files_only: true  # 允许在线下载模型
+    confidence_threshold: 0.6  # 降低阈值以提高召回率和速度
+    min_entity_length: 2  # 最小实体长度
+    enable_context_validation: false  # 暂时禁用以提高速度
+    generic_word_filter: true
+    cache_dir: "./models/ner_cache"
+    # 新增性能优化参数
+    max_text_length: 512  # NER模型最大文本长度
+    batch_processing: true  # 启用批处理
 
-# ===== 主题池配置 =====
-# 移除高级聚类功能，保留主题池概念
-topic_pool:
-  # 句子级分解配置
-  sentence_level: true                  # 是否进行句子级分解
-  min_sentence_length: 15               # 最小句子长度（字符数）
-  
-  # 主题管理参数
-  similarity_threshold: 0.7             # 相似度阈值
-  min_topic_size: 3                     # 最小主题大小
-  max_topic_size: 50                    # 最大主题大小
-  
-  # 主题内聚度评估参数
-  coherence_threshold: 0.6              # 主题内聚度阈值
-
-# ===== 主题池管理配置 =====
-topic_pool:
-  max_sentences_per_topic: 100         # 每个主题最大句子数
-  max_chars_per_topic: 10000           # 每个主题最大字符数
-  similarity_threshold: 0.65           # 主题相似度阈值
-  enable_topic_merging: true           # 是否启用主题合并
-  topic_merge_threshold: 0.8           # 主题合并阈值
-
-# ===== 向量索引配置 =====
+# ================================
+# 向量索引配置
+# ================================
 vector:
-  index_type: "IVF"                    # 索引类型: Flat, IVF, HNSW
-  nlist: 100                           # IVF专用参数
-  nprobe: 10                           # IVF查询时使用
-  ef_search: 32                        # HNSW查询时使用
-  batch_size: 100                      # 批处理大小
-  dimension: 1536                      # 向量维度
-  similarity_metric: "cosine"          # 相似度度量
+  index_type: "faiss"
+  dimension: 1024
+  similarity_metric: "cosine"
+  nlist: 100
+  nprobe: 10
+  enable_gpu: true
 
-# ===== 匹配策略配置 =====
-matching:
-  use_keyword_filter: true             # 是否启用关键词实体校验
-  similarity_strategy: "summary_vector" # 相似度策略: summary_vector, max_sentence, topic_center
-  min_similarity_threshold: 0.3        # 最低匹配阈值
-  enable_fuzzy_matching: true          # 是否启用模糊匹配
-  fuzzy_threshold: 0.8                 # 模糊匹配阈值
-
-# ===== 图谱检索配置 =====
-graph_retrieval:
-  # 实体匹配配置
-  entity_matching:
-    enable_fuzzy_match: true           # 是否启用模糊匹配
-    enable_partial_match: true         # 是否启用部分匹配
-    min_similarity: 0.6                # 最小相似度
-    max_fuzzy_results: 20              # 模糊匹配最大结果数
-    min_token_length: 2                # 最小token长度
-    max_length_diff: 3                 # 最大长度差异
-  
-  # 同义词映射
-  synonym_map:
-    '深圳': ['深圳市', '鹏城', 'SZ']
-    '宝安': ['宝安区', '宝安县']
-    '村': ['村委会', '村民委员会', '行政村']
-    '区': ['区政府', '行政区', '市辖区']
-    '市': ['市政府', '地级市', '县级市']
-    '县': ['县政府', '县级市']
-    '镇': ['镇政府', '乡镇', '建制镇']
-    '街道': ['街道办', '街道办事处']
-    '社区': ['社区居委会', '居委会', '社区委员会']
-    '公司': ['有限公司', '股份公司', '企业']
-    '学校': ['小学', '中学', '学院', '大学']
-    '医院': ['卫生院', '诊所', '医疗中心']
-    '银行': ['信用社', '金融机构']
-    '公园': ['广场', '绿地', '景区']
-    '工厂': ['制造厂', '生产基地', '工业园']
-  
-  # 图谱检索参数
-  graph_retrieval:
-    max_hop_depth: 2                   # 最大跳数
-    max_summary_length: 400            # 最大摘要长度
-    max_intermediate_paths: 5          # 最大中介路径数
-    entity_weight_factor: 1.0          # 实体权重因子
-    enable_pagerank: true              # 是否启用PageRank
-    pagerank_alpha: 0.85               # PageRank阻尼系数
-  
-  # 性能优化配置
-  performance:
-    max_entities_for_fuzzy: 50         # 启用模糊匹配的最大实体数阈值
-    fuzzy_match_timeout: 1.0           # 模糊匹配超时时间（秒）
-    enable_caching: true               # 是否启用缓存
-    cache_size: 1000                   # 缓存大小
-  
-  # 调试配置
-  debug:
-    enable_debug_print: true           # 是否启用调试输出
-    log_matching_details: false        # 是否记录匹配详情
-    performance_monitoring: true       # 是否监控性能
-
-# ===== 重排序配置 =====
-rerank:
-  enabled: true                        # 是否启用重排序
-  method: "simple"                     # 重排序方法: simple, llm, hybrid
-  rerank_weights:                      # 重排序权重配置
-    vector: 0.4                        # 向量相似度权重
-    tfidf: 0.3                         # TF-IDF相似度权重
-    overlap: 0.2                       # 关键词重叠权重
-    diversity: 0.1                     # 多样性权重
-    semantic: 0.6                      # 语义相似度权重（hybrid模式）
-    keyword: 0.1                       # 关键词重叠权重（hybrid模式）
-  
-  # 去重配置
-  enable_deduplication: true           # 是否启用去重
-  dedup_similarity_threshold: 0.9      # 去重相似度阈值
-  max_candidates_before_dedup: 20      # 去重前最大候选数
-
-# ===== 查询配置 =====
+# ================================
+# 查询处理配置
+# ================================
 query:
-  cache_enabled: true                  # 是否启用查询缓存
-  max_history: 1000                    # 最大历史记录数
-  retrieval_method: "enhanced"         # 检索方法: simple, enhanced, graph
-  top_k: 10                           # 返回结果数量
-  rerank: true                        # 是否启用重排序
+  max_results: 10
+  similarity_threshold: 0.7
+  enable_reranking: true
+  rerank_top_k: 20
+  enable_query_expansion: true
+  expansion_terms: 3
 
-# ===== 查询改写配置 =====
-query_rewrite:
-  enabled: false                      # 是否启用查询改写功能
-  strategies: ["clarify"]             # 改写策略列表: clarify, expand, simplify
-  max_iterations: 1                   # 最大改写轮数
-  enable_context_rewrite: false       # 是否启用基于上下文的改写
-  enable_evaluation: true             # 是否启用改写效果评估
-  evaluation_threshold: 0.3           # 改写接受的最低相似度阈值
-
-# ===== 增强检索配置 =====
-enhanced_retrieval:
-  enable_query_expansion: true         # 是否启用查询扩展
-  enable_bm25: true                    # 是否启用BM25检索
-  enable_graph_retrieval: true         # 是否启用图谱实体检索
-  use_enhanced_graph: true             # 是否启用增强图检索
-  vector_top_k: 10                     # 向量检索返回数量
-  bm25_top_k: 8                        # BM25检索返回数量
-  final_top_k: 5                       # 最终返回结果数量
-  enable_reranking: true               # 是否启用重排序
-  
-  # BM25参数
-  bm25_params:
-    k1: 1.2                            # 词频饱和参数
-    b: 0.6                             # 长度归一化参数
-  
-  # 图谱检索参数
-  graph_params:
-    enable_pagerank: true              # 是否启用PageRank实体加权
-    pagerank_alpha: 0.85               # PageRank阻尼系数
-    entity_weight_factor: 0.1          # 实体权重影响因子
-    vector_similarity_weight: 0.7      # 向量相似度权重
-    pagerank_weight: 0.3               # PageRank权重
-    max_entity_hops: 2                 # 实体邻域最大跳数
-    max_path_length: 3                 # 实体路径最大长度
-  
-  # 检索增强配置
-  retrieval:
-    top_k: 5                           # 返回的最大结果数
-    min_similarity_threshold: 0.3      # 最小相似度阈值
-    enable_entity_boost: true          # 是否启用实体增强
-    entity_boost_weight: 0.2           # 实体增强权重
-
-# ===== 答案选择器配置 =====
-answer_selector:
-  num_candidates: 3                    # 候选答案数量
-  max_answer_length: 500               # 单个答案最大长度
-  enable_for_complex_queries: true     # 是否对复杂问题启用多候选机制
-  complexity_threshold:                # 复杂度判断阈值
-    min_length: 50                     # 查询最小长度
-    min_entities: 3                    # 最小实体数量
-
-# ===== 输出配置 =====
+# ================================
+# 输出配置
+# ================================
 output:
-  base_dir: "./result"                 # 输出基础目录
-  work_name: null                      # 工作名称
-  overwrite: false                     # 是否覆盖已有文件
-  reuse_cache: true                    # 是否重用缓存
-  format: "json"                       # 输出格式: json, markdown
-  include_metadata: true               # 是否包含元数据
-  include_coherence_scores: true       # 是否包含内聚度分数
-  # 移除聚类信息配置
-  include_entity_info: true            # 是否包含实体信息
-  include_statistics: true             # 是否包含统计信息
-  max_summary_length: 100              # 最大摘要长度
+  work_dir: "./result"  # 工作目录，用于保存处理结果
+  save_topics: true
+  save_graph: true
+  save_vectors: true
+  output_format: "json"
+  compression: false
 
-# ===== 性能优化配置 =====
+# ================================
+# 性能监控配置
+# ================================
 performance:
-  batch_size: 32                       # 批处理大小
-  max_workers: 4                       # 并行处理线程数
-  use_cache: true                      # 是否使用缓存
-  parallel_processing: true            # 是否启用并行处理
-  cache_embeddings: true               # 是否缓存嵌入向量
-  max_memory_usage: "2GB"              # 最大内存使用量
-  enable_memory_monitoring: true       # 是否启用内存监控
+  enable_monitoring: true
+  log_memory_usage: true
+  log_execution_time: true
 
-# ===== 日志配置 =====
-logging:
-  level: "INFO"                        # 日志级别
-  file: "rag_processing.log"           # 日志文件
-  include_progress_bar: true           # 是否显示进度条
-  # 移除聚类质量日志配置
-  log_entity_extraction: true          # 是否记录实体抽取信息
-  log_redundancy_filter: true          # 是否记录冗余过滤信息
-  
-  # 详细日志配置
-  detailed_logging:
-    entity_extraction: false           # 实体抽取详细日志
-    redundancy_filter: false           # 冗余过滤详细日志
-    graph_construction: false          # 图构建详细日志
-    # 移除聚类详细日志配置
-
-# ===== 实验性功能配置 =====
-experimental:
-  enable_adaptive_thresholds: false    # 是否启用自适应阈值
-  enable_cross_document_entity_linking: false  # 是否启用跨文档实体链接
-  enable_temporal_entity_tracking: false       # 是否启用时序实体跟踪
-  enable_multi_modal_processing: false         # 是否启用多模态处理
+# ================================
+# 配置说明
+# ================================
+# 
+# 1. LLM提供商选择：
+#    - ollama: 本地部署，支持多种开源模型
+#    - openai: OpenAI API，需要API密钥
+#    - huggingface: HuggingFace模型，主要用于嵌入
+#
+# 2. 嵌入模型选择：
+#    - huggingface (推荐): 本地模型，支持GPU加速，批量处理
+#    - ollama: 通过Ollama API调用
+#    - openai: OpenAI嵌入API
+#
+# 3. 文档处理模式：
+#    - enhanced: 传统主题池处理，适合中小规模文档
+#    - clustered: 静态聚类处理，适合大规模文档
+#    - traditional: 基础处理模式
+#
+# 4. 冗余检测方法选择：
+#    - SimHash方法（推荐）：
+#      * 适用场景：大规模数据处理（>10000句子）
+#      * 性能：比embedding方法快100-1000倍
+#      * 内存占用：每句子仅8字节签名
+#      * 准确率：95%+（hamming_threshold=3时）
+#      * hamming_threshold调优：1（最严格）- 3（推荐）- 5（宽松）- 7+（很宽松）
+#    - Embedding方法：
+#      * 适用场景：小规模数据或需要最高准确率
+#      * 性能：较慢但准确率最高
+#      * 内存占用：较大（需存储完整向量）
+#
+# 5. 性能优化建议：
+#    - 大规模数据：使用clustered模式 + simhash冗余检测
+#    - 中小规模数据：使用enhanced模式 + embedding冗余检测
+#    - GPU可用时：设置device为"cuda"，提升嵌入计算速度
+#    - 批量处理：适当增加batch_size，但注意内存限制
+#
+# 6. 快速开始：
+#    - 基础使用：python main.py --config config.yaml
+#    - 文档处理：python main.py --mode doc --config config.yaml
+#    - 图谱构建：python main.py --mode graph --config config.yaml
+#    - 索引构建：python main.py --mode index --config config.yaml

@@ -1,39 +1,56 @@
 import os
 import re
 import json
+import logging
 import networkx as nx
+from typing import List, Dict, Tuple, Any
+from collections import defaultdict
 from llm.llm import LLMClient
 from networkx.readwrite import json_graph
 from utils.io import load_json, save_graph
 from graph.entity_extractor import EntityExtractor, extract_relations_with_llm
+from graph.performance_monitor import monitor_performance, memory_management_context, check_gpu_memory_usage, optimize_for_memory
 
+@monitor_performance("实体关系抽取")
 def extract_entities_and_relations(text: str, llm_client: LLMClient, entity_extractor: EntityExtractor = None, config: dict = None):
     """
-    使用改进的实体抽取器和LLM抽取实体与关系
+    使用改进的实体抽取器和LLM抽取实体与关系 - 优化版本
     
     Args:
         text: 输入文本
         llm_client: LLM客户端
         entity_extractor: 实体抽取器实例
+        config: 配置信息
         
     Returns:
         关系三元组列表 (头实体, 关系, 尾实体)
     """
     if entity_extractor is None:
-        # 从配置中获取实体抽取参数
-        entity_config = config.get("entity_extraction", {}) if config else {}
-        entity_extractor = EntityExtractor(
-            ner_model=entity_config.get("ner_model", "ckiplab/bert-base-chinese-ner"),
-            confidence_threshold=entity_config.get("confidence_threshold", 0.8),
-            min_entity_length=entity_config.get("min_entity_length", 2),
-            enable_context_validation=entity_config.get("enable_context_validation", True),
-            generic_word_filter=entity_config.get("generic_word_filter", True)
-        )
+        # 正确初始化EntityExtractor，传递完整配置
+        entity_extractor = EntityExtractor(config)
     
     try:
+        # 检查GPU内存使用情况
+        if check_gpu_memory_usage():
+            optimize_for_memory()
+            
+        # 文本预处理，移除过多空白字符
+        text = ' '.join(text.split())
+        
         # 1. 使用改进的实体抽取器识别实体
-        entities_info = entity_extractor.extract_entities(text)
-        entities = [entity['text'] for entity in entities_info]
+        with memory_management_context("实体抽取"):
+            entities_info = entity_extractor.extract_entities(text)
+            entities = [entity['text'] for entity in entities_info]
+        
+        # 获取最大实体数量限制
+        max_entities_per_topic = config.get('graph_construction', {}).get('max_entities_per_topic', 50) if config else 50
+        
+        # 限制实体数量
+        if len(entities) > max_entities_per_topic:
+            # 按置信度排序，保留最高置信度的实体
+            entities_with_conf = sorted(entities_info, key=lambda x: x.get('confidence', 0), reverse=True)[:max_entities_per_topic]
+            entities = [entity['text'] for entity in entities_with_conf]
+            print(f"[⚠️ 实体数量限制]: {len(entities)}/{max_entities_per_topic}")
         
         if len(entities) < 2:
             print(f"[⚠️ 实体数量不足]: 仅识别到 {len(entities)} 个实体")
@@ -41,19 +58,37 @@ def extract_entities_and_relations(text: str, llm_client: LLMClient, entity_extr
         
         print(f"[✅ 实体识别]: 识别到 {len(entities)} 个实体: {entities[:10]}{'...' if len(entities) > 10 else ''}")
         
-        # 2. 使用LLM抽取实体间的关系
-        triples = extract_relations_with_llm(text, entities, llm_client)
+        # 2. 使用LLM抽取实体间的关系（限制实体数量以提高效率）
+        if len(entities) <= 20:  # 限制LLM处理的实体数量
+            with memory_management_context("关系抽取"):
+                # 再次检查GPU内存
+                if check_gpu_memory_usage():
+                    print(f"[⚠️ GPU内存不足]: 跳过LLM关系抽取")
+                    triples = []
+                else:
+                    triples = extract_relations_with_llm(text, entities, llm_client)
+        else:
+            print(f"[⚠️ 实体数量过多({len(entities)})]: 跳过LLM关系抽取")
+            triples = []
         
-        print(f"[✅ 关系抽取]: 抽取到 {len(triples)} 个关系三元组")
+        # 过滤自环关系
+        filtered_triples = []
+        for triple in triples:
+            if len(triple) == 3:
+                head, rel, tail = triple
+                if head.lower() != tail.lower():  # 跳过自环关系
+                    filtered_triples.append(triple)
         
-        return triples
+        print(f"[✅ 关系抽取]: 抽取到 {len(filtered_triples)} 个关系三元组")
+        
+        return filtered_triples
         
     except Exception as e:
         print(f"❌ 实体关系抽取失败: {e}")
         return []
 
 
-def build_graph(chunks: list[dict], llm_client: LLMClient, config: dict = None):
+def build_graph(chunks: list[dict], llm_client: LLMClient, config: dict = None, logger=None):
     """
     构建知识图谱
     
@@ -67,10 +102,17 @@ def build_graph(chunks: list[dict], llm_client: LLMClient, config: dict = None):
     """
     G = nx.DiGraph()
     
+    # 如果没有提供logger，使用默认的print输出
+    if logger is None:
+        class DefaultLogger:
+            def warning(self, msg): print(f"WARNING: {msg}")
+            def info(self, msg): print(f"INFO: {msg}")
+            def error(self, msg): print(f"ERROR: {msg}")
+        logger = DefaultLogger()
+    
     # 初始化实体抽取器和图构建配置
-    entity_config = config.get("entity_extraction", {}) if config else {}
     graph_config = config.get("graph_construction", {}) if config else {}
-    entity_extractor = EntityExtractor(entity_config)
+    entity_extractor = EntityExtractor(config)
     
     # 图构建参数
     enable_reverse_links = graph_config.get("enable_reverse_links", True)
@@ -82,7 +124,16 @@ def build_graph(chunks: list[dict], llm_client: LLMClient, config: dict = None):
     total_relations = 0
     
     for i, chunk in enumerate(chunks):
-        text = chunk["text"]
+        # 处理不同数据格式的兼容性
+        if "text" in chunk:
+            text = chunk["text"]
+        elif "sentences" in chunk:
+            # 处理static_chunk_processor生成的格式
+            text = "\n".join(chunk["sentences"]) if isinstance(chunk["sentences"], list) else str(chunk["sentences"])
+        else:
+            logger.warning(f"块 {i} 缺少文本内容，跳过处理")
+            continue
+            
         chunk_id = chunk["id"]
         summary = chunk.get("summary", chunk_id)
         topic_node_id = f"topic::{chunk_id}"
@@ -169,7 +220,7 @@ def run_graph_construction(config: dict, work_dir: str, logger):
     llm_client = LLMClient(config["llm"])
 
     logger.info("开始实体图构建...")
-    G = build_graph(chunks, llm_client)
+    G = build_graph(chunks, llm_client, config["graph"], logger)
 
     logger.info(f"图构建完成，节点数: {len(G.nodes)}, 边数: {len(G.edges)}")
     save_graph(G, output_dir)

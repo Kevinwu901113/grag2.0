@@ -76,8 +76,15 @@ def direct_vector_search(query: str, index, id_map: dict, chunks: list, config: 
             if chunk_id is None:
                 continue
                 
-            # 查找对应的文档块
-            chunk_text = next((c['text'] for c in chunks if c['id'] == chunk_id), None)
+            # 查找对应的文档块，处理不同数据格式的兼容性
+            chunk_text = None
+            for c in chunks:
+                if c['id'] == chunk_id:
+                    if 'text' in c:
+                        chunk_text = c['text']
+                    elif 'sentences' in c:
+                        chunk_text = "\n".join(c['sentences']) if isinstance(c['sentences'], list) else str(c['sentences'])
+                    break
             if chunk_text:
                 candidate = {
                     'text': chunk_text,
@@ -204,7 +211,15 @@ def handle_query(query: str, config: dict, work_dir: str, mode: str = "auto", pr
                 topic_id = match["node_id"]
                 similarity = match.get("similarity", 0.0)
                 topic_title = match.get("title", "无标题")
-                match_text = next((c['text'] for c in chunks if c['id'] == topic_id), None)
+                # 查找对应的文档块，处理不同数据格式的兼容性
+                match_text = None
+                for c in chunks:
+                    if c['id'] == topic_id:
+                        if 'text' in c:
+                            match_text = c['text']
+                        elif 'sentences' in c:
+                            match_text = "\n".join(c['sentences']) if isinstance(c['sentences'], list) else str(c['sentences'])
+                        break
                 
                 if match_text:
                     candidate = {
@@ -243,8 +258,18 @@ def handle_query(query: str, config: dict, work_dir: str, mode: str = "auto", pr
     
     # 7. 文本提取和图谱处理
     graph_start = time.time()
-    # 提取文本用于生成回答
-    retrieved = [c['text'] for c in candidates]
+    # 提取文本用于生成回答，处理不同数据格式的兼容性
+    retrieved = []
+    for c in candidates:
+        if 'text' in c:
+            retrieved.append(c['text'])
+        elif 'sentences' in c:
+            # 处理static_chunk_processor生成的格式
+            text = "\n".join(c['sentences']) if isinstance(c['sentences'], list) else str(c['sentences'])
+            retrieved.append(text)
+        else:
+            print(f"警告: 候选项 {c.get('id', 'unknown')} 缺少文本内容，跳过处理")
+            continue
     context = "\n".join(retrieved) if retrieved else "（未检索到相关文本内容）"
     
     # 图谱摘要
@@ -325,11 +350,18 @@ def handle_query(query: str, config: dict, work_dir: str, mode: str = "auto", pr
         # 构建详细的召回文档信息
         sources_detail = []
         for i, source in enumerate(candidates, 1):
+            # 处理不同数据格式的兼容性
+            text_content = ""
+            if 'text' in source:
+                text_content = source['text']
+            elif 'sentences' in source:
+                text_content = "\n".join(source['sentences']) if isinstance(source['sentences'], list) else str(source['sentences'])
+            
             source_info = {
                 'rank': i,
                 'id': source.get('id', 'unknown'),
                 'similarity': source.get('similarity', 0),
-                'text': source['text'],
+                'text': text_content,
                 'title': source.get('title', ''),
                 'source_type': source.get('source', 'unknown')
             }
@@ -499,7 +531,13 @@ def run_query_loop(config: dict, work_dir: str, logger=None):
                         retrieval_info = f" [{','.join(source['retrieval_types'])}]"
                     elif 'retrieval_type' in source:
                         retrieval_info = f" [{source['retrieval_type']}]"
-                    print(f"{i}. [相似度: {similarity:.3f}]{retrieval_info} {source['text']}")
+                    # 处理不同数据格式的兼容性
+                    text_content = ""
+                    if 'text' in source:
+                        text_content = source['text']
+                    elif 'sentences' in source:
+                        text_content = "\n".join(source['sentences']) if isinstance(source['sentences'], list) else str(source['sentences'])
+                    print(f"{i}. [相似度: {similarity:.3f}]{retrieval_info} {text_content}")
             
             processing_time = result['processing_time']
             enhanced_status = "(增强检索)" if result.get('enhanced_retrieval') else "(传统检索)"

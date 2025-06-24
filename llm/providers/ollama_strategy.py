@@ -15,10 +15,12 @@ class OllamaStrategy:
             "stream": True,
             "options": self.options,
         }
-        response = requests.post(f"{self.host}/api/generate", json=payload, stream=True)
-        full_text = ""
-
+        
         try:
+            response = requests.post(f"{self.host}/api/generate", json=payload, stream=True)
+            response.raise_for_status()  # 检查HTTP状态码
+            
+            full_text = ""
             for line in response.iter_lines(decode_unicode=True):
                 if not line.strip():
                     continue
@@ -26,13 +28,19 @@ class OllamaStrategy:
                     data = json.loads(line)
                     full_text += data.get("response", "")
                 except json.JSONDecodeError as e:
-                    print("[解析失败行]", line)
+                    print(f"[Ollama 解析失败] {line}: {e}")
+                    continue
+            
+            result = full_text.strip()
+            if not result:
+                raise ValueError(f"Ollama模型 {self.model} 返回空响应")
+            
+            return result
+            
         except (requests.RequestException, ConnectionError) as e:
-            print(f"[Ollama 请求失败] 网络错误: {e}")
+            raise ConnectionError(f"Ollama连接失败 ({self.host}): {e}")
         except Exception as e:
-            print(f"[Ollama 请求失败] 未知错误: {e}")
-
-        return full_text.strip()
+            raise RuntimeError(f"Ollama生成失败: {e}")
 
     def embed(self, texts):
         embeddings = []

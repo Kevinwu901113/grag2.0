@@ -1,0 +1,1 @@
+# Embedding module for HuggingFace local models
