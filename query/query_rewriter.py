@@ -43,7 +43,7 @@ class QueryRewriter:
                      original_query: str, 
                      strategy: str = "auto", 
                      context: Optional[str] = None,
-                     entities: Optional[List[str]] = None) -> Dict:
+                     entities: Optional[List[str]] = None) -> Optional[Dict]:
         """
         改写查询
         
@@ -54,35 +54,45 @@ class QueryRewriter:
             entities: 相关实体列表（用于实体感知改写）
             
         Returns:
-            包含改写结果的字典
+            包含改写结果的字典，如果改写失败则返回None
         """
-        start_time = time.time()
-        
-        # 自动选择策略
-        if strategy == "auto":
-            strategy = self._select_strategy(original_query)
+        try:
+            start_time = time.time()
             
-        # 执行改写
-        rewritten_query = self._execute_rewrite(
-            original_query, strategy, context, entities
-        )
-        
-        # 评估改写效果
-        evaluation = None
-        if self.enable_evaluation:
-            evaluation = self._evaluate_rewrite(original_query, rewritten_query)
+            # 自动选择策略
+            if strategy == "auto":
+                strategy = self._select_strategy(original_query)
+                
+            # 执行改写
+            rewritten_query = self._execute_rewrite(
+                original_query, strategy, context, entities
+            )
             
-        result = {
-            "original_query": original_query,
-            "rewritten_query": rewritten_query,
-            "strategy": strategy,
-            "processing_time": time.time() - start_time,
-            "evaluation": evaluation,
-            "context_used": context is not None,
-            "entities_used": entities is not None
-        }
-        
-        return result
+            # 确保改写结果不为None
+            if rewritten_query is None:
+                print(f"⚠️ 改写执行返回None，使用原始查询")
+                rewritten_query = original_query
+            
+            # 评估改写效果
+            evaluation = None
+            if self.enable_evaluation:
+                evaluation = self._evaluate_rewrite(original_query, rewritten_query)
+                
+            result = {
+                "original_query": original_query,
+                "rewritten_query": rewritten_query,
+                "strategy": strategy,
+                "processing_time": time.time() - start_time,
+                "evaluation": evaluation,
+                "context_used": context is not None,
+                "entities_used": entities is not None
+            }
+            
+            return result
+            
+        except Exception as e:
+            print(f"❌ 查询改写过程中发生异常: {e}")
+            return None
     
     def rewrite_with_context(self, 
                            original_query: str,
@@ -196,7 +206,7 @@ class QueryRewriter:
             entities: 相关实体
             
         Returns:
-            改写后的查询
+            改写后的查询，确保不返回None
         """
         try:
             # 构建改写提示词
@@ -206,6 +216,11 @@ class QueryRewriter:
             
             # 调用LLM进行改写
             response = self.llm_client.generate(prompt)
+            
+            # 确保response不为None
+            if response is None:
+                print(f"⚠️ LLM返回None响应，返回原查询: {query}")
+                return query
             
             # 解析改写结果
             rewritten_query = self._parse_rewrite_response(response)
@@ -229,10 +244,18 @@ class QueryRewriter:
             response: LLM响应文本
             
         Returns:
-            解析出的改写查询
+            解析出的改写查询，确保不返回None或空字符串
         """
+        # 确保输入不为None
+        if response is None:
+            return ""
+            
         # 移除常见的标记和格式
         response = response.strip()
+        
+        # 如果响应为空，直接返回空字符串
+        if not response:
+            return ""
         
         # 查找改写后的查询（通常在特定标记之间）
         markers = ["改写后的查询：", "改写结果：", "重写查询：", "优化查询："]
@@ -240,14 +263,19 @@ class QueryRewriter:
             if marker in response:
                 parts = response.split(marker, 1)
                 if len(parts) > 1:
-                    return parts[1].strip().strip('"').strip("'")
+                    result = parts[1].strip().strip('"').strip("'")
+                    if result:  # 确保结果不为空
+                        return result
         
         # 如果没有找到标记，尝试提取第一行非空内容
         lines = [line.strip() for line in response.split('\n') if line.strip()]
         if lines:
-            return lines[0].strip('"').strip("'")
+            result = lines[0].strip('"').strip("'")
+            if result:  # 确保结果不为空
+                return result
             
-        return response
+        # 最后的fallback，返回原始响应（如果不为空）
+        return response if response else ""
     
     def _evaluate_rewrite(self, original: str, rewritten: str) -> Dict:
         """

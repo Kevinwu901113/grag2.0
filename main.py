@@ -13,6 +13,8 @@ from graph.graph_builder import run_graph_construction
 from vector.optimized_vector_indexer import run_vector_indexer
 from vector.entity_vector_indexer import run_entity_vector_indexer
 from query.query_handler import run_query_loop
+from utils.feedback.feedback_logger import FeedbackLogger
+from utils.feedback.strategy_tuner import StrategyTuner
 
 # 轻量级分类器模块（无需训练）
 # 移除了原有的BERT训练和微调模块
@@ -66,7 +68,10 @@ def main():
         logger.info("轻量级分类器无需训练，跳过分类器模块")
         return
     elif args.debug == "query":
-        run_query_loop(config, work_dir, logger)
+        # 初始化反馈模块
+        feedback_logger = FeedbackLogger(work_dir=work_dir)
+        strategy_tuner = StrategyTuner(logger, work_dir=work_dir)
+        run_query_loop(config, work_dir, logger, feedback_logger, strategy_tuner)
         return
 
     # 默认完整流程（跳过分类器训练）
@@ -80,7 +85,11 @@ def main():
     run_graph_construction(config, work_dir, logger)
     run_vector_indexer(config, work_dir, logger)
     run_entity_vector_indexer(config, work_dir, logger=logger)
-    run_query_loop(config, work_dir, logger)
+    
+    # 初始化反馈模块
+    feedback_logger = FeedbackLogger(work_dir=work_dir)
+    strategy_tuner = StrategyTuner(logger, work_dir=work_dir)
+    run_query_loop(config, work_dir, logger, feedback_logger, strategy_tuner)
 
 if __name__ == "__main__":
     main()

@@ -34,7 +34,7 @@ class PriorityContextScheduler:
         self.scheduler_config = config.get('context_scheduler', {})
         
         # 调度器开关
-        self.enabled = self.scheduler_config.get('enabled', False)
+        self.enabled = self.scheduler_config.get('enabled', True)
         
         # 权重配置
         weights = self.scheduler_config.get('weights', {})

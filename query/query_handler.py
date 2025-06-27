@@ -2,6 +2,8 @@ import json
 import os
 import faiss
 import numpy as np
+import json
+import time
 from query.optimized_theme_matcher import ThemeMatcher
 from query.reranker import SimpleReranker, LLMReranker
 from query.enhanced_retriever import EnhancedRetriever
@@ -12,6 +14,7 @@ from llm.answer_selector import AnswerSelector
 from graph.graph_utils import extract_entity_names, match_entities_in_query, extract_subgraph, summarize_subgraph
 from query.query_classifier import classify_query_lightweight
 from utils.io import load_chunks, load_vector_index, load_graph
+from utils.feedback.feedback_logger import FeedbackLogger
 
 def direct_vector_search(query: str, index, id_map: dict, chunks: list, config: dict, top_k: int = 5) -> list:
     """
@@ -106,7 +109,7 @@ def direct_vector_search(query: str, index, id_map: dict, chunks: list, config: 
         print(f"❌ 直接向量搜索失败: {e}")
         return []
 
-def handle_query(query: str, config: dict, work_dir: str, mode: str = "auto", precise: bool = False, use_reranker: str = "simple", use_enhanced_retrieval: bool = True) -> dict:
+def handle_query(query: str, config: dict, work_dir: str, mode: str = "auto", precise: bool = False, use_reranker: str = "simple", use_enhanced_retrieval: bool = True, preloader=None) -> dict:
     """
     处理单个查询
     
@@ -118,6 +121,7 @@ def handle_query(query: str, config: dict, work_dir: str, mode: str = "auto", pr
         precise: 是否精确查询
         use_reranker: 重排序器类型
         use_enhanced_retrieval: 是否使用增强检索
+        preloader: 预加载器实例，如果提供则使用预加载的组件
         
     Returns:
         包含答案、来源和处理时间的字典
@@ -133,19 +137,37 @@ def handle_query(query: str, config: dict, work_dir: str, mode: str = "auto", pr
     
     if is_query_rewrite_enabled(config):
         try:
-            rewriter = QueryRewriter(config)
+            # 优先使用预加载的查询改写器
+            if preloader and preloader.is_preloaded():
+                rewriter = preloader.get_query_rewriter()
+                if not rewriter:
+                    print("⚠️ 预加载的查询改写器不可用，创建新实例")
+                    rewriter = QueryRewriter(config)
+            else:
+                rewriter = QueryRewriter(config)
             rewrite_result = rewriter.rewrite_query(query)
             
-            # 根据评估结果决定是否使用改写后的查询
-            if (rewrite_result.get("evaluation", {}).get("recommendation") == "accept" or 
-                not rewrite_result.get("evaluation")):
-                query = rewrite_result["rewritten_query"]
-                print(f"[查询改写] 原始查询: {original_query}")
-                print(f"[查询改写] 改写查询: {query}")
-                print(f"[查询改写] 策略: {rewrite_result['strategy']}")
-            else:
-                print(f"[查询改写] 改写被拒绝，使用原始查询")
+            # 检查改写结果是否有效
+            if rewrite_result is None:
+                print(f"⚠️ 查询改写返回空结果，使用原始查询")
                 query = original_query
+            elif not isinstance(rewrite_result, dict):
+                print(f"⚠️ 查询改写返回无效类型 {type(rewrite_result)}，使用原始查询")
+                query = original_query
+            elif "rewritten_query" not in rewrite_result:
+                print(f"⚠️ 查询改写结果缺少必要字段，使用原始查询")
+                query = original_query
+            else:
+                # 根据评估结果决定是否使用改写后的查询
+                evaluation = rewrite_result.get("evaluation", {})
+                if (isinstance(evaluation, dict) and evaluation.get("recommendation") == "accept") or not evaluation:
+                    query = rewrite_result["rewritten_query"]
+                    print(f"[查询改写] 原始查询: {original_query}")
+                    print(f"[查询改写] 改写查询: {query}")
+                    print(f"[查询改写] 策略: {rewrite_result.get('strategy', 'unknown')}")
+                else:
+                    print(f"[查询改写] 改写被拒绝，使用原始查询")
+                    query = original_query
         except Exception as e:
             print(f"⚠️ 查询改写失败，使用原始查询: {e}")
             query = original_query
@@ -153,16 +175,25 @@ def handle_query(query: str, config: dict, work_dir: str, mode: str = "auto", pr
     timing_info['query_rewrite'] = time.time() - rewrite_start
     print(f"⏱️ 查询改写耗时: {timing_info['query_rewrite']:.3f}秒")
     
-    # 2. 数据加载
+    # 2. 数据加载（使用预加载器或传统方式）
     load_start = time.time()
-    llm = LLMClient(config)
-    chunks = load_chunks(work_dir)
-    index, id_map = load_vector_index(work_dir)
-    
-    # 加载图谱
-    graph_path = os.path.join(work_dir, "graph.json")
-    graph = load_graph(work_dir) if os.path.exists(graph_path) else None
-    entity_names = extract_entity_names(graph) if graph else set()
+    if preloader and preloader.is_preloaded():
+        # 使用预加载的组件
+        llm = preloader.get_llm_client()
+        chunks = preloader.get_chunks()
+        index, id_map = preloader.get_vector_index()
+        graph, entity_names = preloader.get_graph_data()
+        print("✅ 使用预加载组件，跳过数据加载")
+    else:
+        # 传统加载方式
+        llm = LLMClient(config)
+        chunks = load_chunks(work_dir)
+        index, id_map = load_vector_index(work_dir)
+        
+        # 加载图谱
+        graph_path = os.path.join(work_dir, "graph.json")
+        graph = load_graph(work_dir) if os.path.exists(graph_path) else None
+        entity_names = extract_entity_names(graph) if graph else set()
     
     timing_info['data_loading'] = time.time() - load_start
     print(f"⏱️ 数据加载耗时: {timing_info['data_loading']:.3f}秒")
@@ -196,15 +227,31 @@ def handle_query(query: str, config: dict, work_dir: str, mode: str = "auto", pr
     candidates = []
     
     if use_enhanced_retrieval:
-        # 使用增强检索器
-        retriever = EnhancedRetriever(config, work_dir)
-        candidates = retriever.retrieve(query, top_k=10)
+        # 使用增强检索器（优先使用预加载的）
+        if preloader and preloader.is_preloaded():
+            retriever = preloader.get_enhanced_retriever()
+            if retriever:
+                candidates = retriever.retrieve(query, top_k=10)
+            else:
+                print("⚠️ 预加载的增强检索器不可用，回退到传统方式")
+                retriever = EnhancedRetriever(config, work_dir)
+                candidates = retriever.retrieve(query, top_k=10)
+        else:
+            retriever = EnhancedRetriever(config, work_dir)
+            candidates = retriever.retrieve(query, top_k=10)
     else:
         # 传统检索方法
         if precise and index is not None:
             candidates = direct_vector_search(query, index, id_map, chunks, config, top_k=10)
         else:
-            matcher = ThemeMatcher(chunks, config)
+            # 优先使用预加载的主题匹配器
+            if preloader and preloader.is_preloaded():
+                matcher = preloader.get_theme_matcher()
+                if not matcher:
+                    print("⚠️ 预加载的主题匹配器不可用，创建新实例")
+                    matcher = ThemeMatcher(chunks, config)
+            else:
+                matcher = ThemeMatcher(chunks, config)
             matches = matcher.match(query, top_k=10, min_score=0.3)
             
             for match in matches:
@@ -237,11 +284,22 @@ def handle_query(query: str, config: dict, work_dir: str, mode: str = "auto", pr
     # 5. 重排序
     rerank_start = time.time()
     if use_reranker != "none" and candidates:
-        rerank_config = config.get("rerank", {})
-        if use_reranker == "llm":
-            reranker = LLMReranker(llm, rerank_config)
+        # 优先使用预加载的重排序器
+        if preloader and preloader.is_preloaded():
+            reranker = preloader.get_reranker(use_reranker)
+            if not reranker:
+                print(f"⚠️ 预加载的{use_reranker}重排序器不可用，创建新实例")
+                rerank_config = config.get("rerank", {})
+                if use_reranker == "llm":
+                    reranker = LLMReranker(llm, rerank_config)
+                else:
+                    reranker = SimpleReranker(rerank_config)
         else:
-            reranker = SimpleReranker(rerank_config)
+            rerank_config = config.get("rerank", {})
+            if use_reranker == "llm":
+                reranker = LLMReranker(llm, rerank_config)
+            else:
+                reranker = SimpleReranker(rerank_config)
         
         candidates = reranker.rerank(query, candidates, top_k=10)  # 增加重排序数量供调度器选择
     
@@ -250,7 +308,14 @@ def handle_query(query: str, config: dict, work_dir: str, mode: str = "auto", pr
     
     # 6. 上下文调度
     scheduling_start = time.time()
-    context_scheduler = PriorityContextScheduler(config)
+    # 优先使用预加载的上下文调度器
+    if preloader and preloader.is_preloaded():
+        context_scheduler = preloader.get_context_scheduler()
+        if not context_scheduler:
+            print("⚠️ 预加载的上下文调度器不可用，创建新实例")
+            context_scheduler = PriorityContextScheduler(config)
+    else:
+        context_scheduler = PriorityContextScheduler(config)
     candidates = context_scheduler.schedule_candidates(candidates)
     
     timing_info['context_scheduling'] = time.time() - scheduling_start
@@ -287,8 +352,16 @@ def handle_query(query: str, config: dict, work_dir: str, mode: str = "auto", pr
     
     # 8. 答案生成
     generation_start = time.time()
-    answer_selector_config = config.get('answer_selector', {})
-    answer_selector = AnswerSelector(llm, answer_selector_config)
+    # 优先使用预加载的答案选择器
+    if preloader and preloader.is_preloaded():
+        answer_selector = preloader.get_answer_selector()
+        if not answer_selector:
+            print("⚠️ 预加载的答案选择器不可用，创建新实例")
+            answer_selector_config = config.get('answer_selector', {})
+            answer_selector = AnswerSelector(llm, answer_selector_config)
+    else:
+        answer_selector_config = config.get('answer_selector', {})
+        answer_selector = AnswerSelector(llm, answer_selector_config)
     
     # 构建完整上下文
     full_context = context
@@ -426,7 +499,7 @@ def handle_query(query: str, config: dict, work_dir: str, mode: str = "auto", pr
     
     return result
 
-def run_query_loop(config: dict, work_dir: str, logger=None):
+def run_query_loop(config: dict, work_dir: str, logger=None, feedback_logger=None, strategy_tuner=None):
     """
     运行查询循环
     
@@ -438,11 +511,38 @@ def run_query_loop(config: dict, work_dir: str, logger=None):
     if logger:
         logger.info("开始查询循环")
     
+    # 初始化反馈日志记录器和策略调优器（如果未提供则创建默认实例）
+    if feedback_logger is None:
+        feedback_logger = FeedbackLogger(work_dir=work_dir)
+    if strategy_tuner is None:
+        from utils.feedback.strategy_tuner import StrategyTuner
+        strategy_tuner = StrategyTuner(logger, work_dir=work_dir)
+    
+    # 保存初始配置状态
+    strategy_tuner.save_initial_config(config)
+    
+    # 预加载所有组件
+    from query.preloader import QueryPreloader
+    preloader = QueryPreloader(config, work_dir)
+    
+    try:
+        preloader.preload_all()
+        print(f"\n🚀 预加载完成，节省时间: {preloader.get_load_time():.2f}秒")
+    except Exception as e:
+        print(f"⚠️ 预加载失败: {e}")
+        print("将使用传统加载方式，每次查询可能较慢")
+        preloader = None
+    
     print("\n🔍 RAG查询系统已启动")
     print("输入 'quit' 或 'exit' 退出")
     print("输入 'mode <模式>' 切换查询模式 (norag, hybrid_precise, hybrid_imprecise, auto)")
     print("输入 'reranker <类型>' 切换重排序器 (simple, llm, none)")
     print("输入 'enhanced <on/off>' 切换增强检索")
+    print("输入 'reset' 重置策略调优状态，恢复配置初始值")
+    if preloader and preloader.is_preloaded():
+        print("✅ 预加载模式已启用，查询响应将更快")
+    else:
+        print("⚠️ 传统模式，每次查询需要重新加载组件")
     print("-" * 50)
     
     current_mode = "auto"
@@ -487,24 +587,55 @@ def run_query_loop(config: dict, work_dir: str, logger=None):
                     print("❌ 无效设置，请使用 on/off")
                 continue
             
+            if user_input.lower() == 'reset':
+                try:
+                    strategy_tuner.reset(config)
+                    print("✅ 策略调优状态已重置，配置已恢复到初始值")
+                    print("📊 调整历史已清空")
+                except Exception as e:
+                    print(f"❌ 重置失败: {e}")
+                    if logger:
+                        logger.error(f"重置策略调优状态失败: {e}")
+                continue
+            
             if not user_input:
                 continue
             
             print(f"\n🔍 查询模式: {current_mode}, 重排序器: {current_reranker}, 增强检索: {'开启' if use_enhanced else '关闭'}")
             
-            # 处理查询
+            # 处理查询（传递预加载器）
             result = handle_query(
                 query=user_input,
                 config=config,
                 work_dir=work_dir,
                 mode=current_mode,
                 use_reranker=current_reranker,
-                use_enhanced_retrieval=use_enhanced
+                use_enhanced_retrieval=use_enhanced,
+                preloader=preloader
             )
             
             # 显示结果
             print(f"\n📝 回答:")
             print(result['answer'])
+            
+            # 记录反馈日志
+            try:
+                feedback_dict = feedback_logger.log_feedback(user_input, result, config)
+                
+                # 根据反馈调整策略配置
+                if feedback_dict:
+                    adjustments = strategy_tuner.update_strategy(config, feedback_dict)
+                    if adjustments:
+                        if logger:
+                            logger.info(f"策略已调整: {list(adjustments.keys())}")
+                        print(f"\n🔧 策略调整: {len(adjustments)}项配置已优化")
+                        for key, description in adjustments.items():
+                            print(f"  • {description}")
+            except Exception as e:
+                if logger:
+                    logger.warning(f"记录反馈日志或策略调优失败: {e}")
+                else:
+                    print(f"⚠️ 记录反馈日志或策略调优失败: {e}")
             
             # 显示答案选择信息
             if 'answer_selection' in result:
